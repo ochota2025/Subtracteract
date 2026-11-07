@@ -2890,7 +2890,7 @@ globalThis.SubCore = (function () {
         tile('ΔSteigung', cell.lead.lo != null ? `${rngL(cell.lead)} µm` : '–', wL ? `${ST_LABEL[cell.lead.status]} · Reserve ${fmtRes(cell.lead.reserve)} µm · ${winLabel(wL.nutChar)} / ${winLabel(wL.spChar)}` : 'keine vergleichbaren Steigungsfenster', cell.lead.status === 'out'),
         tile('Grenzen', `BCD ${fmtN(o.bcdLim[0])}…${fmtN(o.bcdLim[1])} · Stg. ±${fmtN(o.leadLim[1])}`, `µm · knapp unter ${fmtN(o.warnReserve)} µm Reserve`));
     const flagNotes = cap ? [...new Set([wB, wL].filter(Boolean).flatMap(flagLines))] : [];
-    const box = h('div', { class: 'chartbox' });
+    const box = h('div', { class: 'chartbox' }), stripBox = h('div', { class: 'chartbox' });
     const shapes = ['circle', 'up', 'square', 'diamond'];
     const legend = h('div', { class: 'legend' },
       g.krs.map((k, i) => h('span', { class: 'lg static' }, shapeGlyph(shapes[i % shapes.length]), h('span', { class: 't', text: `KR${k}` }))),
@@ -2927,12 +2927,15 @@ globalThis.SubCore = (function () {
     det.replaceChildren(...[head, tiles,
       flagNotes.length ? h('ul', { class: 'hintlist' }, flagNotes.map((t) => h('li', { text: t }))) : null,
       h('div', null, h('div', { class: 'chart-title' }, h('h3', { text: `ΔBCD je Spindelgang (${fitL})` }), h('span', { class: 'muted', text: 'je sichtbarer Kugelrille, Mutter − Spindel in µm' })), legend, box),
+      cap ? h('div', { style: 'margin-top:1rem' }, h('div', { class: 'chart-title' }, h('h3', { text: 'Einzelwerte am maßgeblichen Ort' }), h('span', { class: 'muted', text: 'je Teil, Abweichung vom Auftragsmittel in µm · Band = ± s' })),
+        h('div', { class: 'legend' }, [['circle', 'var(--s1)', 'Erststück'], ['up', 'var(--s2)', 'Letztstück'], ['square', 'var(--muted)', 'ohne Angabe']].map(([k, col, t]) => h('span', { class: 'lg static' }, stripGlyph(k, col), h('span', { class: 't', text: t })))), stripBox) : null,
       h('div', { class: cap ? null : 'duo-eq', style: 'margin-top:1rem' },
         h('div', null, h('div', { class: 'h3row' }, h('h3', { text: 'BCD: Spindelgang × Kugelrille' }), cap ? h('span', { class: 'muted', text: 'Cpk_Δ (untere 95-%-Grenze) je Ort · Tooltip = Rechenweg' }) : null), bcdTable,
           h('p', { class: 'note', text: '· = KR läuft nicht über diesen Gang (siehe Sichtbarkeit).' })),
         h('div', null, h('div', { class: 'h3row' }, h('h3', { text: 'Steigung: Fenster gleicher Nennlänge' })), leadTable)),
       cap ? capCalc(cell) : null].filter(Boolean));
     drawPairBcd(box, cell);
+    if (cap) drawStrip(stripBox, cell);
   }
 
   /** Steigungstabelle bei „Fähigkeit“. */
@@ -3005,6 +3008,54 @@ globalThis.SubCore = (function () {
     s('line', { x1: 9, x2: 9, y1: 1, y2: 11, stroke: 'var(--s1)', 'stroke-width': 1.5 }, g);
     s('path', { d: shapePath(kind, 9, 6, 3.6), fill: 'var(--s1)', stroke: 'var(--surface)', 'stroke-width': 1.5 }, g);
     return g;
+  }
+  function stripGlyph(kind, col) {
+    const g = s('svg', { width: 18, height: 12, viewBox: '0 0 18 12', 'aria-hidden': 'true', class: 'glyph' });
+    s('path', { d: shapePath(kind, 9, 6, 3.6), fill: col, stroke: 'var(--surface)', 'stroke-width': 1 }, g);
+    return g;
+  }
+  /**
+   * Punktstreifen: Einzelwerte (je Teil) von Mutter und Spindel am maßgeblichen BCD-Ort und Steigungsfenster,
+   * als Abweichung vom Auftragsmittel; Erst- und Letztstücke unterschiedlich markiert. Zeigt, woher σ! und E/L kommen.
+   */
+  function drawStrip(host, cell) {
+    const rows = [];
+    for (const [crit, it] of [['BCD', cell.bcd.worst], ['Stg.', cell.lead.worst]]) {
+      if (!it) continue;
+      const locN = it.gang != null ? `KR${it.kr}` : winLabel(it.nutChar), locS = it.gang != null ? `Gang ${it.gang}` : winLabel(it.spChar);
+      for (const [who, e, loc] of [['Mutter', it.nutSpread, locN], ['Spindel', it.spSpread, locS]]) {
+        if (!e || !e.values || !e.values.length) continue;
+        const notes = [`s ${e.sUsed != null ? fmt(um(e.sUsed), 2) : '–'} µm${e.src === 'borrowed' ? ' (übernommen)' : ''}`];
+        if (e.flagged) notes.push(`σ! übrige ≈ ${fmt(um(e.sOthers), 1)}`);
+        if (e.el && e.el.flagged) notes.push(`E/L ${fmtS(um(e.el.d), 1)}`);
+        rows.push({ label: `${crit} ${loc} · ${who}`, e, notes: notes.join(' · '), dev: e.values.map((v) => um(v - e.mean)) });
+      }
+    }
+    if (!rows.length) { host.replaceChildren(h('p', { class: 'empty', text: 'Keine Einzelwerte für dieses Paar.' })); return; }
+    const k0 = rootScale();
+    let m = 0;
+    for (const r of rows) { for (const d of r.dev) m = Math.max(m, Math.abs(d)); if (r.e.sUsed != null) m = Math.max(m, um(r.e.sUsed)); }
+    const xd = niceDomain([-m, m], 6), dd = decimalsForStep(xd.step);
+    const f = frame(host, {
+      height: Math.round((rows.length * 40 + 40) * k0), x: xd.domain, y: [0, rows.length], yTicks: [], yFmt: () => '', ml: 170, mb: 30,
+      xTicks: xd.ticks.map((v) => ({ v, label: fmt(v, dd) })), xTitle: 'µm', aria: `Einzelwerte am maßgeblichen Ort, Spindel ${cell.s.id} mit Mutter ${cell.n.id}`,
+    });
+    const P = f.plot, k = f.k;
+    const x0 = f.x(0);
+    s('line', { x1: x0, x2: x0, y1: f.m.t, y2: f.H - f.m.b, class: 'zero' }, P);
+    rows.forEach((r, i) => {
+      const yc = f.y(rows.length - i - 0.5), hh = 12 * k;
+      if (r.e.sUsed != null) { const sd = um(r.e.sUsed); s('rect', { x: f.x(-sd), width: f.x(sd) - f.x(-sd), y: yc - hh, height: 2 * hh, class: 'tolband' }, P); }
+      s('line', { x1: f.m.l, x2: f.W - f.m.r, y1: yc, y2: yc, stroke: 'var(--grid)', 'stroke-width': 1 }, P);
+      s('text', { class: 'tick', x: f.m.l - 8 * k, y: yc, 'text-anchor': 'end', 'dominant-baseline': 'middle' }, f.svg).textContent = r.label;
+      s('text', { class: 'ann', x: f.W - f.m.r - 2 * k, y: yc - hh - 3 * k, 'text-anchor': 'end' }, P).textContent = r.notes;
+      r.dev.forEach((d, j) => {
+        const tag = r.e.tags ? r.e.tags[j] : null;
+        const [kind, col] = tag === 'E' ? ['circle', 'var(--s1)'] : tag === 'L' ? ['up', 'var(--s2)'] : ['square', 'var(--muted)'];
+        const p = s('path', { d: shapePath(kind, f.x(d), yc + ((j % 3) - 1) * 4 * k, 4 * k), fill: col, stroke: 'var(--surface)', 'stroke-width': 1, 'fill-opacity': 0.9 }, P);
+        s('title', null, p).textContent = `${tag === 'E' ? 'Erststück' : tag === 'L' ? 'Letztstück' : 'Teil'}: ${fmt(r.e.values[j], 4)} mm (${fmtS(d, 1)} µm)`;
+      });
+    });
   }
   function capGlyph() {
     const g = s('svg', { width: 18, height: 12, viewBox: '0 0 18 12', 'aria-hidden': 'true', class: 'glyph' });

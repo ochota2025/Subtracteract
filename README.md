@@ -94,7 +94,7 @@ Spezifikation und Begründung: `docs/entwurf-faehigkeit.md`; maßgeblich sind di
 - **Status je Ort (Variante b):** außerhalb bei Cpk_Δ < 1,00; knapp bei Cpk_Δ ≥ 1,00, wenn die untere Grenze unter 1,00 liegt (Fähigkeit nicht nachgewiesen); sonst ok. Die Reserve für „knapp“ in µm gilt in diesem Modus nicht. Die Zelle übernimmt den schlechtesten Ort (außerhalb > keine Daten > knapp > ok); maßgeblich ist bei Gleichstand der Ort mit kleinerem Cpk_Δ, dann mit kleinerer unterer Grenze.
 - **Angezeigt:** Cpk_Δ (untere Grenze) auf 2 Stellen abgerundet, im Tooltip μΔ, σΔ (Mutter/Spindel mit Quelle eigene/übernommen), ν, μΔ ± 3σΔ, der prädiktive Anteil außerhalb (t-Verteilung, enthält die Schätzunsicherheit, nur als Größenordnung: 2 Stellen, aufgerundet), die Zahl der Teilekombinationen außerhalb (k von N) und Min/Max zum Vergleich.
 - **Hinweise (gehen nicht in den Status ein):** σ* = Streuung übernommen; σ! = Streuung eines Auftrags auffällig größer als die der übrigen (einseitiger F-Test, p < 0,01); E/L = Versatz zwischen Erst- und Letztstücken der Mutter (`strSampleRemark`, Welch-t-Test, p < 0,01). Gerechnet wird immer mit der Gesamtstreuung; die Stichprobe gilt als repräsentativ für den Auftrag (Vorgabe).
-- **Detailansicht:** Cpk-Tabelle Gang × KR, Diagramm μΔ ± 3σΔ mit Min/Max, Steigungstabelle und aufklappbarer Rechenweg (die 5 maßgeblichsten Orte und alle Steigungsfenster) mit allen Zwischenwerten und Formeln.
+- **Detailansicht:** Cpk-Tabelle Gang × KR, Diagramm μΔ ± 3σΔ mit Min/Max, Punktstreifen der Einzelwerte von Mutter und Spindel am maßgeblichen Ort (Erst- und Letztstücke markiert), Steigungstabelle und aufklappbarer Rechenweg (die 5 maßgeblichsten Orte und alle Steigungsfenster) mit allen Zwischenwerten und Formeln.
 - **CSV-Export:** gleiche Kopfzeile bei beiden Bewertungen. Bei „Fähigkeit“ stehen in dBCD_min/max die Hülle μ ± 3σ über alle Orte und in der Reserve die kleinste 3σ-Reserve (passt zur Hülle, < 0 genau dann, wenn ein Ort außerhalb ist); angehängt sind je Kriterium (`BCD_…`, `Stg_…`) Cpk, untere Grenze, Ort, μΔ, σΔ, σ Mutter/Spindel, ν, Anteil (ppm, am Ort, Maximum und Summe über die Orte), k und N, Quelle der Streuung und Hinweise. Cpk wird abgerundet, ppm aufgerundet.
 - Alle Verteilungsfunktionen (Normal-, t-, F-Verteilung, ln Γ, unvollständige Beta-/Gammafunktion, Digamma, Trigamma und Umkehrung) stehen im Kern, ohne Bibliotheken.
 - Annahmen: zufällige Kombination in der Montage, die Stichprobe vertritt den Auftrag, Normalverteilung im Auftrag. Cpk_Δ ist eine Paarungsfähigkeit der Differenz, keine Teilefähigkeit nach ISO 22514. Das Minimum über alle Orte ist keine gemeinsame 95-%-Aussage.
@@ -143,9 +143,16 @@ Sind beide gesetzt, gibt der Test zusätzlich die Statusverteilung Min/Max gegen
 
 ## Aufbau
 
+Optional, mit Playwright (in Claude-Code-Cloud-Sitzungen vorinstalliert): Prüfung der Oberfläche bei Full HD, 2560, 3840 und 390 px (Konsolenfehler, Querscrollen, „null/NaN“, Bedienung der Paarung):
+
+```bash
+node tools/ui-check.js
+```
+
 ```
 index.html                  App (Kern + Oberfläche, eine Datei)
 testdata/                   synthetische Beispieldaten
 tools/generate-synthetic*.js Generatoren für die Beispieldaten (Spindel, Mutter)
+tools/ui-check.js           optionale Prüfung der Oberfläche im Browser (Playwright)
 tests/run-tests.js          Tests für den Kern (Node, ohne Abhängigkeiten)
 ```
