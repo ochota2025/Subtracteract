@@ -119,16 +119,24 @@ test('Datei gelesen, kein Abbruch', () => {
   assert.strictEqual(syn.encoding, 'ASCII');
   assert.strictEqual(file.records.length, 3767);
 });
-test('ein Datensatz, 10 Fertigungsaufträge, 39 Merkmale', () => {
+test('ein Datensatz, 10 Fertigungsaufträge, 39 Merkmale, davon 22 BCD/Steigung ausgewertet', () => {
   assert.strictEqual(model.datasets.length, 1);
   assert.strictEqual(ds.material, '9990001');
   assert.strictEqual(ds.process, '0100/P_HEAT');
   assert.strictEqual(ds.batches.length, 10);
-  assert.strictEqual(ds.chars.length, 39);
+  assert.strictEqual(ds.allChars.length, 39);
+  assert.strictEqual(ds.chars.length, 22);
+  assert.strictEqual(ds.ignoredChars.length, 17);
+});
+test('nur BCD und Steigung werden ausgewertet (Vorgabe), alles andere ignoriert', () => {
+  assert.ok(ds.chars.every((c) => c.cls.group === 'bcd' || c.cls.group === 'lead'));
+  assert.ok(ds.records.every((r) => ds.charMap.has(r.position)));
+  assert.strictEqual(ds.records.length, 22 * 100);
+  assert.ok(!ds.charMap.has('400') && !ds.charMap.has('SH1') && !ds.charMap.has('448'));
 });
 test('Zuordnung: 9 Gauss, 5 Hüll, 5 Pferch, 3 Steigung, 10 Zylindrizität', () => {
   const n = {};
-  for (const c of ds.chars) n[c.cls.sub] = (n[c.cls.sub] || 0) + 1;
+  for (const c of ds.allChars) n[c.cls.sub] = (n[c.cls.sub] || 0) + 1;
   assert.strictEqual(n['bcd-gauss'], 9);
   assert.strictEqual(n['bcd-huell'], 5);
   assert.strictEqual(n['bcd-pferch'], 5);
@@ -138,10 +146,10 @@ test('Zuordnung: 9 Gauss, 5 Hüll, 5 Pferch, 3 Steigung, 10 Zylindrizität', () 
   assert.strictEqual(n.heat, 2);
 });
 test('Umlaute im Prüfplantext dekodiert', () => {
-  assert.strictEqual(ds.charMap.get('400').remark, 'Rändel-ø');
+  assert.strictEqual(ds.allCharMap.get('400').remark, 'Rändel-ø');
 });
 test('Einseitige Toleranz: UGW fehlt', () => {
-  const c = ds.charMap.get('448');
+  const c = ds.allCharMap.get('448');
   assert.strictEqual(c.lsl, null);
   assert.strictEqual(c.usl, 0.03);
 });
@@ -220,7 +228,7 @@ test('in Excel gespeichert: Dezimalkomma auch in Positionen, ohne Anführungszei
   assert.strictEqual(f.records.length, 3767);
   assert.ok(f.issues.list().find((i) => i.code === 'excel-pos'), 'Excel-Warnung erwartet');
   const ds2 = C.buildModel([f]).datasets[0];
-  assert.strictEqual(ds2.chars.length, 39);
+  assert.strictEqual(ds2.chars.length, 22);
   near(ds2.charMap.get('432.02.GG').usl, 16.52, 1e-12);
   const r2 = C.characterize(ds2, new Set(ds2.batches.map((b) => b.order)));
   near(r2.pooled.chars.get('404.1').mean, res.pooled.chars.get('404.1').mean, 1e-12);
@@ -229,16 +237,20 @@ test('fehlende Pflichtspalte → klarer Abbruch', () => {
   const f = C.parseCAQ('"strSAPOrder";"value"\n"1";2\n', 'falsch.csv');
   assert.ok(/Pflichtspalten fehlen/.test(f.fatal));
 });
-test('nicht numerischer Messwert → übersprungen mit Warnung', () => {
+test('nicht numerischer Messwert: Warnung nur bei BCD/Steigung, sonst still übersprungen', () => {
   const lines = syn.text.split('\n');
   const head = C.parseCSV(lines[0], ';').rows[0];
-  const vi = head.indexOf('value');
-  const cells = C.parseCSV(lines[5], ';').rows[0];
-  cells[vi] = 'x.y';
-  lines[5] = cells.join(';');
+  const vi = head.indexOf('value'), pi = head.indexOf('strPosition');
+  const iH = lines.findIndex((l, i) => i > 0 && C.parseCSV(l, ';').rows[0][pi] === 'SH1');
+  const iB = lines.findIndex((l, i) => i > 0 && C.parseCSV(l, ';').rows[0][pi] === '432.02.GG');
+  for (const i of [iH, iB]) { const c = C.parseCSV(lines[i], ';').rows[0]; c[vi] = 'x.y'; lines[i] = c.map((v) => (/^-?[\d.]+$|^NA$|^FALSE$|^\d{4}-/.test(v) ? v : `"${v}"`)).join(';'); }
   const f = C.parseCAQ(lines.join('\n'), 'kaputt.csv');
-  assert.strictEqual(f.records.length, 3766);
-  assert.ok(f.issues.list().find((i) => i.code === 'value-nan'));
+  assert.strictEqual(f.records.length, 3765);
+  const m = C.buildModel([f]);
+  const w = m.issues.list().filter((i) => i.code === 'value-nan');
+  assert.strictEqual(w.length, 1);
+  assert.strictEqual(w[0].count, 1);
+  assert.ok(/432\.02\.GG/.test(w[0].examples[0]));
 });
 test('Teiletyp: Spindel erkannt (auch wenn der Materialtext „Mutter“ sagt, zählen die Merkmale)', () => {
   assert.strictEqual(file.partType, 'spindel');
@@ -253,7 +265,8 @@ test('Härteproben-ID („90010001_1“) ist keine Teile-UUID → keine Teile-Du
 test('Export: Semikolon, Dezimalkomma, gepoolt + je Auftrag', () => {
   const csv = C.exportCSV(ds, res);
   const rows = csv.trim().split('\r\n');
-  assert.strictEqual(rows.length, 1 + 39 * 11);
+  assert.strictEqual(rows.length, 1 + 22 * 11);
+  assert.ok(!rows.some((r) => r.includes(';SH1;') || r.includes(';448;')));
   assert.ok(rows[0].startsWith('Teil;Material;Prozess;'));
   assert.ok(rows[1].startsWith('Spindel;9990001;0100/P_HEAT;gepoolt (10 Aufträge)'));
   assert.ok(/;16,5[0-9]*;/.test(rows.find((r) => r.includes(';432.02.GG;'))));
@@ -271,7 +284,8 @@ test('als Mutter erkannt (Materialtext ist nur die Nummer)', () => {
   assert.strictEqual(nds.materialText, '9990002');
   assert.strictEqual(nf.partType, 'mutter');
   assert.strictEqual(nds.partType, 'mutter');
-  assert.strictEqual(nds.chars.length, 45);
+  assert.strictEqual(nds.allChars.length, 45);
+  assert.strictEqual(nds.chars.length, 18);
 });
 test('Mutter-Datei im Reiter Spindel → Fehlerhinweis', () => {
   const ds3 = C.buildModel([nf], 'spindel').datasets[0];
@@ -280,29 +294,30 @@ test('Mutter-Datei im Reiter Spindel → Fehlerhinweis', () => {
 });
 test('BCD je Kugelrille + Zylinder, Gauss/Hüll/Pferch', () => {
   const n = {};
-  for (const c of nds.chars) n[c.cls.sub] = (n[c.cls.sub] || 0) + 1;
+  for (const c of nds.allChars) n[c.cls.sub] = (n[c.cls.sub] || 0) + 1;
   same([n['bcd-gauss'], n['bcd-huell'], n['bcd-pferch'], n.bcdx, n.lead, n.cyl], [5, 5, 5, 4, 3, 6]);
   const c = nds.charMap.get('713.3.GN');
-  same([c.cls.fit, c.cls.kr, c.cls.gang], ['huell', 3, 6]);
+  same([c.cls.fit, c.cls.kr, c.cls.gang], ['huell', 3, 3]);
   assert.ok(nds.charMap.get('713.GX').cls.overall);
 });
 test('Durchmesser mit .GG ohne „BCD“ sind kein BCD (Außen-ø, Kern-ø, Lagersitz)', () => {
-  for (const pos of ['707.GG', '707.1.GG', '751.GG', '751.3.GG', '769.GG']) assert.strictEqual(nds.charMap.get(pos).cls.group, 'dia', pos);
+  for (const pos of ['707.GG', '707.1.GG', '751.GG', '751.3.GG', '769.GG']) { assert.strictEqual(nds.allCharMap.get(pos).cls.group, 'dia', pos); assert.ok(!nds.charMap.has(pos)); }
 });
 test('BCD-Kennzahlen: Range und Kopie „wie 713.1.GG“ nicht im Profil', () => {
-  for (const pos of ['842', '842.GG', '892.GG', '884']) assert.strictEqual(nds.charMap.get(pos).cls.group, 'bcdx', pos);
-  assert.strictEqual(nds.charMap.get('884').cls.copyOf, '713.1.GG');
+  for (const pos of ['842', '842.GG', '892.GG', '884']) { assert.strictEqual(nds.allCharMap.get(pos).cls.group, 'bcdx', pos); assert.ok(!nds.charMap.has(pos), 'ignoriert'); }
+  assert.strictEqual(nds.allCharMap.get('884').cls.copyOf, '713.1.GG');
 });
-test('Steigungsfenster KR1–KR4 = 6 Gänge, Einzelgänge = 1; KR-Lage abgeleitet', () => {
-  same(['748', '748.1', '748.2'].map((p) => nds.charMap.get(p).cls.turns), [6, 1, 1]);
-  assert.ok(nds.krGeometryDerived);
-  same([...nds.krAt].sort((a, b) => a[0] - b[0]), [[1, 1], [2, 2], [3, 6], [4, 7]]);
-  same([nds.charMap.get('748').cls.from, nds.charMap.get('748').cls.to], [1, 7]);
+test('Mutter mit 4 Gängen: KR1…KR4 = Gang 1…4, Steigungsfenster über die Nennlänge', () => {
+  same([...nds.krAt].sort((a, b) => a[0] - b[0]), [[1, 1], [2, 2], [3, 3], [4, 4]]);
+  assert.strictEqual(nds.krGeometryDerived, false);
+  same(['748', '748.1', '748.2'].map((p) => [nds.charMap.get(p).cls.from, nds.charMap.get(p).cls.to]), [[1, 4], [1, 2], [3, 4]]);
+  assert.ok(['748', '748.1', '748.2'].every((p) => !nds.charMap.get(p).cls.turns), 'keine abgeleitete Gangzahl');
 });
 test('Zylindrizität Gewinde je KR, Außen-ø als Form', () => {
-  assert.strictEqual(nds.charMap.get('792.2').cls.kr, 2);
-  assert.strictEqual(nds.charMap.get('793').cls.group, 'cyl');
-  assert.strictEqual(nds.charMap.get('743').cls.group, 'form');
+  assert.strictEqual(nds.allCharMap.get('792.2').cls.kr, 2);
+  assert.strictEqual(nds.allCharMap.get('793').cls.group, 'cyl');
+  assert.strictEqual(nds.allCharMap.get('743').cls.group, 'form');
+  assert.ok(!nds.charMap.has('792.2') && !nds.charMap.has('743'), 'nicht dargestellt');
 });
 test('Re-Importe: gleiche UUID + alle Werte gleich → Messung einmal gezählt', () => {
   const parts = Object.fromEntries(nds.batches.map((b) => [b.order, b.nParts]));
@@ -328,15 +343,17 @@ test('Steckbrief Mutter: Zylinder-Gauss, Steigung aus 6-Gang-Fenster', () => {
   near(sm.bcd.gaussMean, nres.pooled.chars.get('713.GG').mean, 1e-12);
   assert.strictEqual(sm.bcd.nominal, 16.55);
   same(sm.bcd.profile.map((g) => g.kr), [1, 2, 3, 4]);
-  assert.strictEqual(sm.lead.mainTurns, 6);
-  near(sm.lead.pitchMean, nres.pooled.chars.get('748').mean / 6, 1e-12);
+  assert.strictEqual(sm.lead.mainTurns, null);
+  assert.strictEqual(sm.lead.pitchMean, null);
+  assert.strictEqual(sm.lead.mainLength, 17.4);
+  near(sm.lead.mainMean, nres.pooled.chars.get('748').mean, 1e-12);
   assert.strictEqual(sm.lead.spread, null);
   assert.ok(sm.bcd.formOverall > sm.bcd.formMean, 'Hüll − Pferch des Zylinders ≥ Mittel je KR');
-  assert.ok(sm.ootThread > 0 && sm.ootThread < sm.oot);
+  assert.ok(sm.ootChars.every((p) => nds.charMap.has(p)));
 });
-test('Merkmal mit allen Werten außerhalb → Warnung', () => {
-  const x = nIssues.find((i) => i.code === 'sys-out');
-  assert.ok(/842/.test(x.examples[0]) && /1137/.test(x.examples[0]));
+test('ignorierte Merkmale (842, 1137) erzeugen keine Warnungen', () => {
+  assert.ok(!nIssues.find((i) => i.code === 'sys-out'));
+  assert.ok(!nIssues.find((i) => i.code === 'bcd-copy'));
 });
 test('Export Mutter: Lage als KR', () => {
   const rows = C.exportCSV(nds, nres).trim().split('\r\n');
@@ -346,6 +363,7 @@ test('Export Mutter: Lage als KR', () => {
 });
 
 console.log('Review-Funde (Regressionstests)');
+const spPair2 = () => ({ ds, res: C.characterize(ds, new Set(ds.batches.map((b) => b.order))) });
 const nutLines = nutText.trim().split('\n');
 const NH = C.parseCSV(nutLines[0], ';').rows[0];
 const col = (n) => NH.indexOf(n);
@@ -379,13 +397,14 @@ test('Spindel- und Mutter-Zeilen in einer Datei → je Typ aufgeteilt', () => {
   assert.ok(parts.every((x) => /gemischt\.csv \((Spindel|Mutter)-Teil\)/.test(x.fileName)));
   same(parts.map((x) => x.records.length).sort((a, b) => a - b), [3767, 4545].sort((a, b) => a - b));
 });
-test('Mutter nur mit dem 6-Gang-Fenster → Gangzahl unbekannt, keine falsche Steigung', () => {
+test('Mutter nur mit dem Fenster KR1–KR4 → Vergleich über die Nennlänge, keine Gangzahl nötig', () => {
   const t = rebuildNut((c) => (['748.1', '748.2'].includes(c[col('strPosition')]) ? null : c));
-  const m2 = C.buildModel([C.parseCAQ(t, 'nur748.csv')], 'mutter');
-  const d2 = m2.datasets[0];
-  assert.ok(d2.issues.list().find((i) => i.code === 'lead-turns-unknown'));
+  const d2 = C.buildModel([C.parseCAQ(t, 'nur748.csv')], 'mutter').datasets[0];
   const r2 = C.characterize(d2, new Set(d2.batches.map((b) => b.order)));
   assert.strictEqual(r2.pooled.summary.lead.pitchMean, null);
+  near(r2.pooled.summary.lead.mainMean, r2.pooled.chars.get('748').mean, 1e-12);
+  const pm = C.pairing(spPair2(), { ds: d2, res: r2 }, C.PAIR_DEFAULTS);
+  same(pm.geo.leadPairs.map((lp) => [lp.nut.position, lp.sp.map((x) => x.position)]), [['748', ['404.1', '404.5', '404.9']]]);
 });
 test('Steigungsfenster ohne Nennmaß → Warnung', () => {
   const t = rebuildNut((c) => { if (c[col('strPosition')] === '748.2') c[col('decNominal')] = 'NA'; return c; });

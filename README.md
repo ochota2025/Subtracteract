@@ -2,6 +2,8 @@
 
 Analyse von **Steigungs- und BCD-Differenzen bei Kugelgewindetrieben**. Läuft komplett lokal im Browser: `index.html` öffnen, CAQ-Export hineinziehen. Es wird nichts hochgeladen, es gibt keinen Server und keine externen Bibliotheken.
 
+**Ausgewertet und dargestellt werden nur BCD und Steigung.** Alle anderen Merkmale der Exporte (Härte, Rändel, Form, Lage, sonstige Durchmesser, BCD-Spannen …) werden beim Einlesen ignoriert. Der Einlesebericht nennt nur ihre Anzahl.
+
 | Schritt | Stand |
 |---|---|
 | 1 · Spindel charakterisieren | ✅ |
@@ -47,20 +49,16 @@ Maßgeblich sind `strPosition` und `strCharTextEN`. Der Prüfplantext (`strRemar
 |---|---|---|
 | BCD | `diameter` mit Position `NNN.GG.Gx`; mittlere Zahl = Gang; `GG` = Gauss, `GN` = Hüll, `GX` = Pferch | `432.02.GN` → BCD Hüll, Gang 2 |
 | Steigung | `length` mit Fenster `G<a>-G<b>` im Prüfplantext; Steigung je Gang = Länge / (b − a) | `404.5` „Steigung G5-G11“ → 6 Gänge |
-| Zylindrizität | `cylindricity`; Positionsendung = Gang, ohne Endung = Gewinde gesamt | `449.09`, `448` |
-| Rändel / Lage | `diameter`, `roundness`, `concentricity`, `runout`, `total runout` ohne BCD-Muster | `400`–`434` |
-| Wärmebehandlung | `surface hardness`, `case hardness depth` | `SH1`, `CHD1` |
+| ignoriert | alles andere (Zylindrizität, Rändel/Lage, Wärmebehandlung …) | `448`, `449.xx`, `400`–`434`, `SH1`, `CHD1` |
 
 ### Merkmalszuordnung Mutter
 
 | Gruppe | Regel | Beispiel |
 |---|---|---|
 | BCD | `diameter` mit „BCD“ im Prüfplantext und Position `NNN[.k].Gx`; `k` = Kugelrille KRk, ohne `k` = Zylinder gesamt | `713.3.GN` → BCD Hüll, KR3; `713.GG` → Zylinder |
-| BCD-Kennzahlen | „BCD Range …“ und „… (wie 713.1.GG)“ – Spannen bzw. Kopien mit eigener Toleranz, nicht im Profil | `842`, `842.GG`, `892.GG`, `884` |
-| Steigung | `distance`/`length` mit „Steigung (KRa-KRb)“; Gangzahl aus dem Nennmaß (kleinstes Fenster = 1 Gang) | `748` KR1–KR4 = 6 Gänge, `748.1` KR1–KR2 = 1 Gang |
-| Lage der KR | aus den Steigungsfenstern abgeleitet, KR1 = Gang 1 | KR1 = 1, KR2 = 2, KR3 = 6, KR4 = 7 |
-| Zylindrizität Gewinde | `cylindricity` mit „Gew“ im Prüfplantext | `792.1` … `792.4`, `793` |
-| übrige | nach Merkmalsart: Durchmesser, Längen/Abstände/Radien, Form, Lage/Koaxialität/Versatz, Lauf/Richtung/Winkel | `707.1.GG` Außen-ø ist **kein** BCD |
+| Lage der KR | Die Mutter hat 4 Gänge: KR1…KR4 = Gang 1…4 der Mutter | |
+| Steigung | `distance`/`length` mit „Steigung (KRa-KRb)“; verglichen über die Nennlänge (keine Gangzahl nötig) | `748` KR1–KR4 (17,4 mm), `748.1` KR1–KR2 und `748.2` KR3–KR4 (je 2,9 mm) |
+| ignoriert | „BCD Range …“, Kopien „… (wie 713.1.GG)“ und alle übrigen Merkmale | `842`, `884`, `707.1.GG` (Außen-ø – **kein** BCD), `792.x` |
 
 ### Steckbrief (Spindel / Mutter)
 
@@ -69,9 +67,9 @@ Maßgeblich sind `strPosition` und `strCharTextEN`. Der Prüfplantext (`strRemar
 | BCD Gauss x̄ | Mittel aller Gauss-Werte über alle Gänge | Gauss-Mittel des Zylinders (`713.GG`, = Mittel der KR) |
 | BCD-Verlauf | Spanne der Gang-Mittelwerte (Gauss) | Spanne der KR-Mittelwerte (Gauss) |
 | Hüll − Pferch x̄ | Mittel je Gang | Mittel je KR, dazu der Zylinder gesamt |
-| Steigung p̄ | Mittel der Fenster mit der größten Gangzahl, je Gang | aus dem 6-Gang-Fenster KR1–KR4, je Gang |
-| Steigung zwischen Fenstern / Einzelgänge | Spanne der Fenstermittel (G1–G7, G5–G11, G9–G15) | Spanne KR1–KR2 vs. KR3–KR4 (je 1 Gang) |
-| Gewinde: Werte außerhalb Toleranz | Steigung, BCD, BCD-Kennzahlen, Zylindrizität Gewinde; die Zahl für alle Merkmale steht daneben | ebenso |
+| Steigung | p̄ = Mittel der drei 6-Gang-Fenster, je Gang | Länge KR1–KR4 (x̄ und Abweichung von 17,4 mm) |
+| Steigung zwischen Fenstern / Einzelfenster | Spanne der Fenstermittel (G1–G7, G5–G11, G9–G15) | Spanne KR1–KR2 vs. KR3–KR4 (je 2,9 mm) |
+| Werte außerhalb Toleranz | nur BCD und Steigung | ebenso |
 
 ## Paarung (Reiter 3)
 
@@ -80,10 +78,9 @@ Ziel ist, im Umlauf befindliche Spindel- und Mutter-Aufträge matrixweise zu pr�
 - **Δ = Mutter − Spindel**, in µm.
 - **Bewertung (Standard: Min/Max der Einzelwerte):** Je Paar zählt der ungünstigste Fall aus den Einzelteilen, also Min Mutter − Max Spindel bis Max Mutter − Min Spindel. Umschaltbar auf die Differenz der Auftragsmittel. Eine Bewertung über die Fähigkeit ist vorgesehen, aber noch offen.
 - **BCD (Standard: Gauss, umschaltbar auf Hüll oder Pferch):** Je Spindelgang wird mit jeder Kugelrille (KR) der Mutter verglichen, die über diesen Gang läuft. Hüll und Pferch gibt es bei der Spindel nur an den Gängen 2, 9, 14, 16 und 17.
-- **Steigung:** das Mutterfenster KR1–KR4 (6 Gänge) gegen jedes Spindelfenster gleicher Gangzahl (G1–G7, G5–G11, G9–G15). Die Einzelgänge KR1–KR2 und KR3–KR4 haben auf der Spindel kein Gegenstück.
+- **Steigung:** Verglichen werden Fenster gleicher Nennlänge: das Mutterfenster KR1–KR4 (17,4 mm) gegen jedes Spindelfenster G1–G7, G5–G11 und G9–G15 (je 17,4 mm). Die Einzelfenster KR1–KR2 und KR3–KR4 (2,9 mm) haben auf der Spindel kein Gegenstück.
 - **Grenzen (Standard):** ΔBCD 15…85 µm, ΔSteigung ±25 µm. „Knapp“ heißt, die Reserve zur Grenze liegt unter 5 µm. Alle Werte sind einstellbar und werden im Browser gemerkt.
-- **Sichtbarkeit (Standard, Vorgabe):** KR1…KR4 liegen in aufeinanderfolgenden Gängen, die Mutter fährt über das ganze gemessene Gewinde. Bei 17 Gängen heißt das: Gang 1 sieht KR1, Gang 2 KR1–2, Gang 3 KR1–3, die Gänge 4–14 alle KR, Gang 15 KR2–4, Gang 16 KR3–4, Gang 17 KR4. KR-Versatz und Hub sind einstellbar.
-- **Offene Frage:** Laut Prüfplan der Mutter liegen KR1 und KR4 sechs Gänge auseinander (Steigung KR1–KR4 = 17,4 mm), KR1/KR2 und KR3/KR4 je einen. Das ergäbe einen KR-Versatz von 0, 1, 5 und 6 statt 0, 1, 2 und 3.
+- **Sichtbarkeit (Standard, Vorgabe):** Die Mutter hat 4 Gänge, KR1…KR4 = Gang 1…4. Sie fährt über das ganze gemessene Gewinde der Spindel. Bei 17 Gängen heißt das: Gang 1 sieht KR1, Gang 2 KR1–2, Gang 3 KR1–3, die Gänge 4–14 alle KR, Gang 15 KR2–4, Gang 16 KR3–4, Gang 17 KR4. KR-Versatz und Hub sind einstellbar.
 - Ausgeschlossene Aufträge aus den Reitern Spindel und Mutter fehlen auch in der Matrix.
 
 ## Erwartetes Dateiformat

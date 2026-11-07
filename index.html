@@ -387,7 +387,7 @@ globalThis.SubCore = (function () {
   /** Eine Datei lesen. Liefert Messwerte (eine Zeile = ein Wert) und Hinweise. */
   function parseCAQ(text, fileName) {
     const issues = new Issues();
-    const res = { fileName, delimiter: null, encoding: null, rowCount: 0, records: [], issues, header: [], fatal: null, partType: null };
+    const res = { fileName, delimiter: null, encoding: null, rowCount: 0, records: [], skipped: [], issues, header: [], fatal: null, partType: null };
     if (!text || !text.trim()) { res.fatal = 'Die Datei ist leer.'; return res; }
     const delimiter = res.delimiter = detectDelimiter(text);
     const { rows, lines } = parseCSV(text, delimiter);
@@ -425,8 +425,11 @@ globalThis.SubCore = (function () {
       if (row.length !== header.length) issues.add('warn', 'col-count', `Zeile hat nicht ${header.length} Spalten`, `${where}: ${row.length} Spalten`);
       const rawVal = get(row, 'value');
       const value = parseNum(rawVal);
-      if (value === null) { issues.add('info', 'value-na', 'Messwert fehlt (NA) – Zeile übersprungen', where); continue; }
-      if (Number.isNaN(value)) { issues.add('warn', 'value-nan', 'Messwert ist keine Zahl – Zeile übersprungen', `${where}: „${rawVal}“`); continue; }
+      if (value === null || Number.isNaN(value)) {
+        // erst nach der Merkmalszuordnung melden – nur, wenn das Merkmal BCD oder Steigung ist
+        res.skipped.push({ code: value === null ? 'value-na' : 'value-nan', where, raw: rawVal, position: txt(row, 'position'), charText: txt(row, 'charText'), remark: txt(row, 'remark') });
+        continue;
+      }
       let order = str(row, 'order');
       const inspOrder = str(row, 'inspOrder');
       if (!order && inspOrder) order = inspOrder.split('/')[0].trim();
@@ -458,7 +461,7 @@ globalThis.SubCore = (function () {
         gauge, uuid, sampleRemark: txt(row, 'sampleRemark'),
         tsLocal: parseTs(get(row, 'tsLocal')), tsUTC: parseTs(get(row, 'tsUTC')),
       };
-      if (idx.gauge >= 0 && !rec.gauge) issues.add('info', 'manual', 'Messwerte ohne Messmittel-Nr. (vermutlich von Hand nachgetragen) – werden normal ausgewertet', `${order} · ${position}`);
+      rec.manual = idx.gauge >= 0 && !rec.gauge;
       res.records.push(rec);
     }
     if (!res.records.length) res.fatal = 'Keine verwertbaren Messwerte gefunden.';
@@ -545,6 +548,8 @@ globalThis.SubCore = (function () {
     { id: 'other', label: 'Sonstige' },
   ];
   const THREAD_GROUPS = new Set(['lead', 'bcd', 'bcdx', 'cyl']);
+  /** Ausgewertet und dargestellt werden nur BCD und Steigung (Vorgabe); alle anderen Merkmale werden ignoriert. */
+  const RELEVANT = new Set(['bcd', 'lead']);
 
   /**
    * Ordnet ein Merkmal ein. Maßgeblich sind Position (strPosition) und Merkmalstext (strCharTextEN);
@@ -614,53 +619,21 @@ globalThis.SubCore = (function () {
   }
 
   /**
-   * Mutter: Gangzahl je Steigungsfenster aus dem Nennmaß ableiten (kleinstes Fenster = 1 Gang)
-   * und daraus die Lage der Kugelrillen KR1…KRn in Gängen bestimmen (KR1 = Gang 1).
+   * Mutter: KR1…KRn liegen in aufeinanderfolgenden Gängen der Mutter (Mutter mit 4 Gängen: KR1…KR4 = Gang 1…4).
+   * Steigungsfenster „KRa-KRb“ werden über ihre Nennlänge verglichen; eine Gangzahl wird nicht abgeleitet.
    */
   function deriveNutGeometry(ds, issues) {
-    const allLeads = ds.chars.filter((c) => c.cls.group === 'lead' && c.cls.fromKr != null);
-    const noNom = allLeads.filter((c) => !(c.nominal > 0));
-    if (noNom.length) issues.add('warn', 'lead-no-nominal', 'Steigungsfenster ohne verwertbares Nennmaß – Gangzahl unbekannt, nicht in Steigung p̄ und Paarung', noNom.map((c) => c.position).join(', '));
-    let leads = allLeads.filter((c) => c.nominal > 0);
+    const leads = ds.chars.filter((c) => c.cls.group === 'lead' && c.cls.fromKr != null);
+    const noNom = leads.filter((c) => !(c.nominal > 0));
+    if (noNom.length) issues.add('warn', 'lead-no-nominal', 'Steigungsfenster ohne verwertbares Nennmaß – kann nicht verglichen werden', noNom.map((c) => c.position).join(', '));
     const krs = new Set();
-    for (const c of ds.chars) if (c.cls.kr != null && c.cls.group === 'bcd') krs.add(c.cls.kr);
-    for (const c of allLeads) { krs.add(c.cls.fromKr); krs.add(c.cls.toKr); }
-    // Gangzahl: kleinstes Fenster = 1 Gang – nur wenn es verschiedene Fensterlängen in ganzzahligem Verhältnis gibt
-    const pitch0 = leads.length ? Math.min(...leads.map((c) => c.nominal)) : null;
-    const ratios = leads.map((c) => c.nominal / pitch0);
-    const distinct = new Set(leads.map((c) => c.nominal)).size;
-    if (leads.length && distinct >= 2 && ratios.every((x) => Math.abs(x - Math.round(x)) < 0.02)) {
-      for (const c of leads) { c.cls.turns = Math.round(c.nominal / pitch0); c.cls.turnsDerived = true; }
-    } else {
-      if (leads.length) issues.add('warn', 'lead-turns-unknown', 'Gangzahl der Steigungsfenster nicht ableitbar (es fehlt ein Fenster mit 1 Gang zum Vergleich) – Steigung je Gang wird nicht berechnet', leads.map((c) => `${c.position}: ${c.nominal}`).join(', '));
-      leads = [];
-    }
-    const at = new Map();
-    const sorted = [...krs].sort((a, b) => a - b);
-    let ok = false;
-    if (leads.length && sorted.length) {
-      at.set(sorted[0], 1);
-      for (let pass = 0; pass < 10; pass++) {
-        let changed = false;
-        for (const c of leads) {
-          const a = c.cls.fromKr, b = c.cls.toKr, n = c.cls.turns;
-          if (at.has(a) && !at.has(b)) { at.set(b, at.get(a) + n); changed = true; }
-          else if (at.has(b) && !at.has(a)) { at.set(a, at.get(b) - n); changed = true; }
-        }
-        if (!changed) break;
-      }
-      ok = sorted.every((k) => at.has(k)) && leads.every((c) => at.get(c.cls.toKr) - at.get(c.cls.fromKr) === c.cls.turns);
-    }
-    if (!ok) {
-      at.clear();
-      for (const k of sorted) at.set(k, k);
-      if (leads.length) issues.add('info', 'kr-geometry', 'Lage der Kugelrillen (KR) in Gängen nicht eindeutig ableitbar – Diagramme zeigen KR1…KRn mit gleichem Abstand');
-    }
-    ds.krAt = at; // KR → Position (Gang)
-    ds.krGeometryDerived = ok;
+    for (const c of ds.chars) if (c.cls.kr != null) krs.add(c.cls.kr);
+    for (const c of leads) { krs.add(c.cls.fromKr); krs.add(c.cls.toKr); }
+    ds.krAt = new Map([...krs].sort((x, y) => x - y).map((k) => [k, k]));
+    ds.krGeometryDerived = false;
     for (const c of ds.chars) {
-      if (c.cls.kr != null && c.cls.group === 'bcd') c.cls.gang = at.get(c.cls.kr);
-      if (c.cls.group === 'lead' && c.cls.fromKr != null) { c.cls.from = at.get(c.cls.fromKr); c.cls.to = at.get(c.cls.toKr); }
+      if (c.cls.kr != null && c.cls.group === 'bcd') c.cls.gang = c.cls.kr;
+      if (c.cls.group === 'lead' && c.cls.fromKr != null) { c.cls.from = c.cls.fromKr; c.cls.to = c.cls.toKr; }
     }
   }
 
@@ -769,6 +742,13 @@ globalThis.SubCore = (function () {
       ds.issues = new Issues();
       analyseDataset(ds, ds.issues, expectedType);
     }
+    const types = [...new Set(datasets.map((d) => d.partType))];
+    for (const f of files) for (const sk of f.skipped || []) {
+      const relevant = types.some((t) => RELEVANT.has(classify({ charText: sk.charText, position: sk.position, remark: sk.remark }, t).group));
+      if (!relevant) continue;
+      if (sk.code === 'value-na') issues.add('info', 'value-na', 'BCD-/Steigungswert fehlt (NA) – Zeile übersprungen', `${sk.position} · ${sk.where}`);
+      else issues.add('warn', 'value-nan', 'BCD-/Steigungswert ist keine Zahl – Zeile übersprungen', `${sk.position} · ${sk.where}: „${sk.raw}“`);
+    }
     return { records, datasets, issues };
   }
 
@@ -810,21 +790,39 @@ globalThis.SubCore = (function () {
     for (const c of chars.values()) {
       c.charNo = mode(c.charNos); c.charText = mode(c.texts); c.unit = mode(c.units); c.remark = mode(c.remarks);
       [c.nominal, c.lsl, c.usl] = JSON.parse(mode(c.tolVariants));
+      c.cls = classify(c, ds.partType);
+      c.relevant = RELEVANT.has(c.cls.group);
+      // Merkmale, die nach Steigung/BCD aussehen, aber nicht erkannt wurden, nicht still ignorieren
+      if (!c.relevant && /steigung/i.test(c.remark || '')) issues.add('warn', 'lead-unknown', 'Merkmal sieht nach Steigung aus, das Steigungsfenster („G1-G7“ bzw. „KR1-KR4“) ist aber nicht erkennbar – nicht ausgewertet', `${c.position}: „${c.remark}“`);
+      if (!c.relevant && c.cls.group !== 'bcdx' && /\bBCD\b/i.test(c.remark || '')) issues.add('warn', 'bcd-unknown', 'Merkmal sieht nach BCD aus, Position passt aber nicht zum Muster – nicht ausgewertet', `${c.position}: „${c.remark}“`);
+      if (!c.relevant) continue;
       if (c.tolVariants.size > 1) {
         issues.add('warn', 'tol-var', 'Nennmaß/Toleranz ändert sich innerhalb der Daten. „Außerhalb Toleranz“ wird je Messwert mit dessen eigener Toleranz bewertet; angezeigt wird die häufigste.', `${c.position} (${c.tolVariants.size} Varianten)`);
       }
       if (c.texts.size > 1 || c.charNos.size > 1) issues.add('warn', 'pos-ambig', 'Position gehört zu mehreren Merkmalen', `${c.position}: ${[...c.texts.keys()].join(' / ')}`);
-      c.cls = classify(c, ds.partType);
       if (c.cls.note) issues.add('info', 'remark-mismatch', 'Prüfplantext passt nicht zur Position – zugeordnet wird über die Position', c.cls.note);
-      if (c.cls.unclearLead) issues.add('warn', 'lead-unknown', 'Längenmerkmal ohne erkennbares Steigungsfenster („G1-G7“) im Prüfplantext – als Einzelmerkmal geführt', `${c.position}: „${c.remark}“`);
-      if (c.cls.copyOf) issues.add('info', 'bcd-copy', 'Merkmal ist eine Kopie eines anderen BCD-Merkmals mit eigener Toleranz – nicht doppelt im BCD-Profil gezählt', `${c.position} = ${c.cls.copyOf}`);
     }
     const gi = Object.fromEntries(GROUPS.map((g, i) => [g.id, i]));
-    ds.chars = [...chars.values()].sort((a, b) => (a.orderInIP ?? 1e9) - (b.orderInIP ?? 1e9) || a.position.localeCompare(b.position));
-    ds.charMap = chars;
+    const byIP = (a, b) => (a.orderInIP ?? 1e9) - (b.orderInIP ?? 1e9) || a.position.localeCompare(b.position);
+    ds.allChars = [...chars.values()].sort(byIP);
+    ds.allCharMap = chars;
+    ds.ignoredChars = ds.allChars.filter((c) => !c.relevant);
+    ds.chars = ds.allChars.filter((c) => c.relevant);
+    ds.charMap = new Map(ds.chars.map((c) => [c.position, c]));
+    // ab hier nur noch BCD- und Steigungswerte
+    ds.allRecordCount = ds.records.length;
+    ds.records = ds.records.filter((r) => ds.charMap.has(r.position));
+    const manual = new Map();
+    for (const r of ds.records) if (r.manual) inc(manual, `${r.order} · ${r.position}`);
+    for (const [k, n] of manual) issues.add('info', 'manual', 'Messwerte ohne Messmittel-Nr. (vermutlich von Hand nachgetragen) – werden normal ausgewertet', k, n);
+    {
+      let t0 = Infinity, t1 = -Infinity;
+      for (const r of ds.records) { const t = r.tsLocal ?? r.tsUTC; if (t != null) { if (t < t0) t0 = t; if (t > t1) t1 = t; } }
+      ds.period = t0 <= t1 ? [t0, t1] : null;
+    }
     if (ds.partType === 'mutter') deriveNutGeometry(ds, issues);
     const key = (c) => (c.cls.overall ? -1 : c.cls.gang ?? c.cls.from ?? c.cls.kr ?? 1e9);
-    ds.charsGrouped = [...ds.chars].sort((a, b) => gi[a.cls.sub] - gi[b.cls.sub] || key(a) - key(b) || (b.cls.turns ?? 0) - (a.cls.turns ?? 0) || (a.orderInIP ?? 1e9) - (b.orderInIP ?? 1e9));
+    ds.charsGrouped = [...ds.chars].sort((a, b) => gi[a.cls.sub] - gi[b.cls.sub] || key(a) - key(b) || (b.nominal ?? 0) - (a.nominal ?? 0) || (a.orderInIP ?? 1e9) - (b.orderInIP ?? 1e9));
     const outBy = new Map();
     for (const r of ds.records) if ((r.lsl != null && r.value < r.lsl - EPS) || (r.usl != null && r.value > r.usl + EPS)) inc(outBy, r.position);
     const sysOut = [];
@@ -856,7 +854,7 @@ globalThis.SubCore = (function () {
       b.nParts = b.parts.size || null;
       if (b.batchNos.size > 1) issues.add('warn', 'order-multi-batch', 'Fertigungsauftrag mit mehreren Chargennummern', `${b.order}: ${b.batchNo}`);
       if (!isFinite(b.first)) { b.first = null; b.last = null; }
-      b.missing = ds.chars.filter((c) => c.cls.group !== 'heat' && !c.orders.has(b.order)).map((c) => c.position);
+      b.missing = ds.chars.filter((c) => !c.orders.has(b.order)).map((c) => c.position);
       if (b.missing.length) issues.add('warn', 'incomplete', 'Fertigungsauftrag ohne Werte für einzelne Merkmale', `${b.order}: ${b.missing.slice(0, 5).join(', ')}${b.missing.length > 5 ? ' …' : ''}`);
     }
     for (const [bn, os] of batchToOrders) if (os.size > 1) issues.add('warn', 'batch-multi-order', 'Chargennummer in mehreren Fertigungsaufträgen', `${bn}: ${[...os].join(', ')}`);
@@ -911,15 +909,17 @@ globalThis.SubCore = (function () {
     const gMeans = profile.filter((g) => g.gauss).map((g) => g.gauss.stats.mean);
     const form = profile.filter((g) => g.huell && g.pferch).map((g) => g.huell.stats.mean - g.pferch.stats.mean);
     const windows = ds.chars
-      .filter((c) => c.cls.group === 'lead' && chars.get(c.position) && c.cls.turns)
+      .filter((c) => c.cls.group === 'lead' && chars.get(c.position) && c.cls.from != null && c.nominal > 0)
       .map((c) => {
-        const st = chars.get(c.position);
-        return { char: c, stats: st, from: c.cls.from, to: c.cls.to, turns: c.cls.turns, pitch: st.mean / c.cls.turns, nominalPitch: c.nominal != null ? c.nominal / c.cls.turns : null };
+        const st = chars.get(c.position), t = c.cls.turns || null;
+        return { char: c, stats: st, from: c.cls.from, to: c.cls.to, turns: t, length: c.nominal, pitch: t ? st.mean / t : null, nominalPitch: t ? c.nominal / t : null };
       })
-      .sort((a, b) => a.from - b.from || b.turns - a.turns);
-    const maxTurns = windows.length ? Math.max(...windows.map((w) => w.turns)) : 0;
-    const main = windows.filter((w) => w.turns === maxTurns);
+      .sort((a, b) => a.from - b.from || b.length - a.length);
+    // Hauptfenster = größte Nennlänge (Spindel: 3 × 17,4 mm über je 6 Gänge; Mutter: KR1–KR4)
+    const maxLen = windows.length ? Math.max(...windows.map((w) => w.length)) : 0;
+    const main = windows.filter((w) => Math.abs(w.length - maxLen) < 1e-9);
     const mainMeans = main.map((w) => w.stats.mean);
+    const maxTurns = main.length && main.every((w) => w.turns) ? main[0].turns : null;
     let oot = 0, ootThread = 0, nPerChar = 0;
     const ootChars = [], ootThreadChars = [];
     for (const c of ds.chars) {
@@ -943,9 +943,10 @@ globalThis.SubCore = (function () {
         formOverall: overall.huell && overall.pferch ? overall.huell.stats.mean - overall.pferch.stats.mean : null,
       },
       lead: {
-        windows, mainTurns: maxTurns, mainCount: main.length,
-        pitchMean: main.length ? mean(main.map((w) => w.pitch)) : null,
-        nominalPitch: main.length ? main[0].nominalPitch : null,
+        windows, mainTurns: maxTurns, mainCount: main.length, mainLength: main.length ? maxLen : null,
+        mainMean: main.length ? mean(mainMeans) : null, mainLabel: main.length === 1 ? main[0].char.cls.label : null,
+        pitchMean: maxTurns ? mean(main.map((w) => w.pitch)) : null,
+        nominalPitch: maxTurns ? main[0].nominalPitch : null,
         spread: mainMeans.length > 1 ? Math.max(...mainMeans) - Math.min(...mainMeans) : null,
       },
       oot, ootChars, ootThread, ootThreadChars, nPerChar,
@@ -997,7 +998,7 @@ globalThis.SubCore = (function () {
    */
   function pairingGeometry(spDs, nuDs, o) {
     const spGangs = [...new Set(spDs.chars.filter((c) => c.cls.group === 'bcd' && c.cls.gang != null).map((c) => c.cls.gang))].sort((a, b) => a - b);
-    const spLead = spDs.chars.filter((c) => c.cls.group === 'lead' && c.cls.turns);
+    const spLead = spDs.chars.filter((c) => c.cls.group === 'lead' && c.cls.from != null && c.nominal > 0);
     const bounds = [...spGangs, ...spLead.flatMap((c) => [c.cls.from, c.cls.to])];
     const gMin = bounds.length ? Math.min(...bounds) : 1, gMax = bounds.length ? Math.max(...bounds) : 1;
     const krs = [...new Set([
@@ -1016,8 +1017,9 @@ globalThis.SubCore = (function () {
     const strokeTo = o.strokeTo != null && isFinite(o.strokeTo) ? Number(o.strokeTo) : gMax - relMax;
     const sees = (g, k) => { const s = g - rel(k); return s >= strokeFrom - EPS && s <= strokeTo + EPS; };
     const visibility = spGangs.map((g) => ({ gang: g, krs: krs.filter((k) => sees(g, k)) }));
-    const nuLead = nuDs.chars.filter((c) => c.cls.group === 'lead' && c.cls.turns);
-    const leadPairs = nuLead.map((n) => ({ nut: n, sp: spLead.filter((s) => s.cls.turns === n.cls.turns) }));
+    const nuLead = nuDs.chars.filter((c) => c.cls.group === 'lead' && c.cls.from != null && c.nominal > 0);
+    // verglichen werden Fenster gleicher Nennlänge (Mutter KR1–KR4 17,4 mm ↔ Spindel G1–G7 … 17,4 mm)
+    const leadPairs = nuLead.map((n) => ({ nut: n, sp: spLead.filter((s) => Math.abs(s.nominal - n.nominal) < 1e-9) }));
     return { spGangs, krs, off, gMin, gMax, strokeFrom, strokeTo, visibility, leadPairs, spLead, nuLead, sees };
   }
 
@@ -1409,8 +1411,8 @@ globalThis.SubCore = (function () {
         tile('Material', ds.material || '–', ds.materialText && ds.materialText !== ds.material ? ds.materialText : null),
         tile('Prozess', ds.process || '–', ds.periodLabel),
         tile('Fertigungsaufträge', String(ds.batches.length), `${new Set(ds.batches.map((b) => b.batchNo)).size} Chargen${ds.machines.length > 1 ? ` · ${ds.machines.length} Maschinen` : ''}`),
-        tile('Merkmale', String(ds.chars.length), `${groups.lead || 0} Steigung · ${nBcd} BCD · ${groups.cyl || 0} Zyl.`),
-        tile('Messwerte', nf(0).format(ds.records.length), `aus ${state.files.filter((f) => !f.fatal).length} Datei(en)`),
+        tile('Merkmale BCD / Steigung', String(ds.chars.length), `${nBcd} BCD · ${groups.lead || 0} Steigung · ${ds.ignoredChars.length} weitere ignoriert`),
+        tile('Messwerte BCD / Steigung', nf(0).format(ds.records.length), `von ${nf(0).format(ds.allRecordCount)} eingelesenen · ${state.files.filter((f) => !f.fatal).length} Datei(en)`),
       ));
     }
 
@@ -1446,7 +1448,7 @@ globalThis.SubCore = (function () {
     // Merkmalszuordnung
     if (ds) {
       const det = h('details', { ontoggle: (e) => { state.mapOpen = e.target.open; } },
-        h('summary', null, 'Merkmalszuordnung ', h('span', { text: `· ${ds.chars.length} Merkmale – so ordnet die App jedes Merkmal ein` })),
+        h('summary', null, 'Merkmalszuordnung ', h('span', { text: `· ${ds.chars.length} BCD- und Steigungsmerkmale – so ordnet die App sie ein (${ds.ignoredChars.length} weitere Merkmale werden ignoriert)` })),
         h('div', { class: 'scroll tall' }, h('table', null,
           h('thead', null, h('tr', null, ['Pos.', 'Merkmal (CAQ)', 'Prüfplantext', 'Erkannt als', 'Einheit', 'Nennmaß', 'UGW', 'OGW', 'Werte', 'Aufträge'].map((t, i) => h('th', { class: i >= 5 ? 'num' : null, text: t })))),
           h('tbody', null, ds.chars.map((c) => h('tr', null,
@@ -1462,8 +1464,8 @@ globalThis.SubCore = (function () {
             h('td', { class: 'num', text: String(c.orders.size) }),
           ))))),
         h('p', { class: 'note', text: ds.partType === 'mutter'
-          ? `Regeln (Mutter): BCD = „diameter“ mit „BCD“ im Prüfplantext und Position NNN[.k].Gx (GG = Gauss, GN = Hüll, GX = Pferch; k = Kugelrille KRk, ohne k = Zylinder gesamt). „BCD Range“ und „wie …“ sind Kennzahlen bzw. Kopien und zählen nicht zum Profil. Steigung = „distance/length“ mit „Steigung (KRa-KRb)“; die Gangzahl je Fenster wird aus dem Nennmaß abgeleitet (kleinstes Fenster = 1 Gang)${ds.krGeometryDerived ? ` – daraus liegt ${[...ds.krAt].sort((a, b) => a[0] - b[0]).map(([k, g]) => `KR${k} bei Gang ${g}`).join(', ')}` : ''}. Alle übrigen Merkmale werden nach Merkmalsart gruppiert.`
-          : 'Regeln (Spindel): BCD = „diameter“ mit Position NNN.GG.Gx (GG = Gauss, GN = Hüll, GX = Pferch, mittlere Zahl = Gang). Steigung = „length“ mit Fenster „G1-G7“ im Prüfplantext. Zylindrizität mit Positionsendung = je Gang, sonst gesamt. Der Prüfplantext wird sonst nur gegengeprüft.' }));
+          ? 'Regeln (Mutter): BCD = „diameter“ mit „BCD“ im Prüfplantext und Position NNN[.k].Gx (GG = Gauss, GN = Hüll, GX = Pferch; k = Kugelrille KRk = Gang k der Mutter, ohne k = Zylinder gesamt). Steigung = „distance/length“ mit „Steigung (KRa-KRb)“, verglichen über die Nennlänge. Ausgewertet werden nur BCD und Steigung; „BCD Range“, Kopien („wie …“) und alle übrigen Merkmale werden ignoriert.'
+          : 'Regeln (Spindel): BCD = „diameter“ mit Position NNN.GG.Gx (GG = Gauss, GN = Hüll, GX = Pferch, mittlere Zahl = Gang). Steigung = „length“ mit Fenster „G1-G7“ im Prüfplantext. Ausgewertet werden nur BCD und Steigung; alle übrigen Merkmale werden ignoriert. Der Prüfplantext wird sonst nur gegengeprüft.' }));
       det.open = state.mapOpen;
       parts.push(h('div', { style: 'margin-top:16px' }, det));
     }
@@ -1488,6 +1490,9 @@ globalThis.SubCore = (function () {
     const bcdNom = (res.pooled.summary.bcd.nominal ?? ds.chars.find((c) => c.cls.group === 'bcd')?.nominal) ?? null;
     const shUnit = res.pooled.summary.hardnessUnit || '';
     const hasHeat = ds.chars.some((c) => c.cls.group === 'heat');
+    // Spindel: Steigung je Gang (Gangzahl bekannt); Mutter: Länge des Hauptfensters (KR1–KR4)
+    const leadByPitch = res.pooled.summary.lead.pitchMean != null;
+    const leadMain = ds.chars.filter((c) => c.cls.group === 'lead' && c.nominal > 0).sort((a, b) => b.nominal - a.nominal)[0];
     const multiMachine = ds.machines.length > 1;
     const row = (u) => {
       const sm = u.summary, isAll = !!u.pooled;
@@ -1512,8 +1517,8 @@ globalThis.SubCore = (function () {
         h('td', { class: 'num', text: sm.nPerChar ? String(sm.nPerChar) : '–' }),
         h('td', { class: 'num', text: fmt(g, 4) }),
         h('td', { class: 'num', text: g != null && bcdNom != null ? fmtS(um(g - bcdNom), 1) : '–' }),
-        h('td', { class: 'num', text: fmt(sm.lead.pitchMean, 5) }),
-        h('td', { class: 'num' + (sm.ootThread ? ' oot' : ''), title: `Gewinde: ${sm.ootThreadChars.join(', ') || '–'} · alle Merkmale: ${plWert(sm.oot)}`, text: sm.ootThread ? `⚠ ${sm.ootThread}` : '0' }),
+        h('td', { class: 'num', text: leadByPitch ? fmt(sm.lead.pitchMean, 5) : fmt(sm.lead.mainMean, 4) }),
+        h('td', { class: 'num' + (sm.oot ? ' oot' : ''), title: sm.ootChars.join(', '), text: sm.oot ? `⚠ ${sm.oot}` : '0' }),
         hasHeat ? h('td', { class: 'num', text: sm.hardness ? fmt(sm.hardness.mean, 0) : '–' }) : null,
       ].filter(Boolean));
       return tr;
@@ -1529,7 +1534,7 @@ globalThis.SubCore = (function () {
         h('thead', null, h('tr', null,
           h('th', { text: 'Einb.' }), h('th', { text: 'Fertigungsauftrag' }), h('th', { text: 'Charge' }), multiMachine ? h('th', { text: 'Maschine' }) : null, h('th', { text: 'Prüfdatum' }),
           h('th', { class: 'num', text: 'n je Merkmal' }), h('th', { class: 'num', text: 'BCD Gauss x̄ [mm]' }), h('th', { class: 'num', text: 'Δ Nenn [µm]' }),
-          h('th', { class: 'num', text: 'Steigung p̄ [mm]' }), h('th', { class: 'num', text: 'Gewinde außerh. Tol.' }), hasHeat ? h('th', { class: 'num', text: `Härte x̄ [${shUnit || '–'}]` }) : null)),
+          h('th', { class: 'num', text: leadByPitch ? 'Steigung p̄ [mm]' : `${leadMain ? leadMain.cls.label : 'Steigung'} x̄ [mm]` }), h('th', { class: 'num', text: 'Werte außerh. Tol.' }), hasHeat ? h('th', { class: 'num', text: `Härte x̄ [${shUnit || '–'}]` }) : null)),
         h('tbody', null, row(res.pooled), units.map(row)))),
     );
   }
@@ -1547,7 +1552,7 @@ globalThis.SubCore = (function () {
   function renderProfile() {
     const sec = $('profileSec'), ds = state.ds, u = selUnit();
     const sm = u.summary, b = sm.bcd, l = sm.lead;
-    const hasBcd = ds.chars.some((c) => c.cls.group === 'bcd'), hasLead = ds.chars.some((c) => c.cls.group === 'lead' && c.cls.turns && c.cls.from != null);
+    const hasBcd = ds.chars.some((c) => c.cls.group === 'bcd'), hasLead = ds.chars.some((c) => c.cls.group === 'lead' && c.cls.from != null && c.nominal > 0);
     const nut = ds.partType === 'mutter';
     const head = h('div', { class: 'sec-head' }, h('div', null, h('h2', { text: `${PART[ds.partType].label}-Steckbrief` }), h('p', { class: 'sub', text: unitTitle(u) })));
     if (!hasBcd && !hasLead) {
@@ -1560,13 +1565,15 @@ globalThis.SubCore = (function () {
     }
     const nomP = l.nominalPitch;
     const posWord = nut ? 'KR' : 'Gänge';
-    const singles = l.windows.filter((w) => w.turns === 1);
+    // kürzeste Fensterlänge, wenn sie von der Hauptlänge abweicht (Mutter: KR1–KR2 und KR3–KR4 mit je 2,9 mm)
+    const minLen = l.windows.length ? Math.min(...l.windows.map((w) => w.length)) : null;
+    const singles = minLen != null && minLen < (l.mainLength ?? 0) ? l.windows.filter((w) => Math.abs(w.length - minLen) < 1e-9).map((w) => Object.assign({}, w, { pitch: w.stats.mean })) : [];
     let leadTile;
     if (l.spread != null) {
       leadTile = tile('Steigung zwischen Fenstern', `${fmt(um(l.spread), 1)} µm`, `Spanne der ${l.mainCount} Fenstermittel (Länge über ${l.mainTurns} Gänge)`);
     } else if (singles.length > 1) {
       const ps = singles.map((w) => w.pitch);
-      leadTile = tile('Steigung der Einzelgänge', `${fmt(um(Math.max(...ps) - Math.min(...ps)), 1)} µm`, `Spanne ${singles.map((w) => w.char.cls.label.replace('Steigung ', '')).join(' vs. ')} (je 1 Gang)`);
+      leadTile = tile('Steigung der Einzelfenster', `${fmt(um(Math.max(...ps) - Math.min(...ps)), 1)} µm`, `Spanne ${singles.map((w) => w.char.cls.label.replace('Steigung ', '')).join(' vs. ')} (je ${fmt(singles[0].length, 1)} mm)`);
     } else {
       leadTile = tile('Steigung zwischen Fenstern', '–', l.windows.length ? 'nur ein Steigungsfenster' : 'keine Steigungsfenster mit bekannter Gangzahl');
     }
@@ -1575,9 +1582,11 @@ globalThis.SubCore = (function () {
       tile('BCD Gauss x̄', b.gaussMean != null ? `${fmt(b.gaussMean, 4)} mm` : '–', b.gaussMean != null && b.nominal != null ? `${fmtS(um(b.gaussMean - b.nominal), 1)} µm zum Nennmaß ${fmt(b.nominal, 3)}${b.gaussFromOverall ? ` · Zylinder ${ov.gauss.char.position}` : ''} · ${plWert(b.gaussN)}` : null),
       tile(`BCD-Verlauf über ${posWord}`, b.profileRange != null ? `${fmt(um(b.profileRange), 1)} µm` : '–', `Spanne der ${nut ? 'KR' : 'Gang'}-Mittelwerte (Gauss)`),
       tile('Hüll − Pferch x̄', b.formMean != null ? `${fmt(um(b.formMean), 1)} µm` : '–', b.formN ? `Mittel über ${b.formN} ${posWord}${b.formOverall != null ? ` · Zylinder gesamt ${fmt(um(b.formOverall), 1)} µm` : ''}` : null),
-      tile('Steigung p̄', l.pitchMean != null ? `${fmt(l.pitchMean, 5)} mm` : '–', l.pitchMean != null && nomP != null ? `${fmtS(um(l.pitchMean - nomP), 2)} µm je Gang · Nenn ${fmt(nomP, 3)} · aus ${l.mainCount > 1 ? `${l.mainCount} Fenstern` : 'dem Fenster'} über ${l.mainTurns} Gänge` : null),
+      l.pitchMean != null
+        ? tile('Steigung p̄', `${fmt(l.pitchMean, 5)} mm`, nomP != null ? `${fmtS(um(l.pitchMean - nomP), 2)} µm je Gang · Nenn ${fmt(nomP, 3)} · aus ${l.mainCount > 1 ? `${l.mainCount} Fenstern` : 'dem Fenster'} über ${l.mainTurns} Gänge` : null)
+        : tile(l.mainLabel || 'Steigung', l.mainMean != null ? `${fmt(l.mainMean, 4)} mm` : '–', l.mainMean != null ? `${fmtS(um(l.mainMean - l.mainLength), 1)} µm zur Nennlänge ${fmt(l.mainLength, 3)} mm` : null),
       leadTile,
-      tile('Gewinde: Werte außerhalb Toleranz', String(sm.ootThread), `${sm.ootThread ? `in ${sm.ootThreadChars.length} Gewinde-Merkmal(en) · ` : ''}alle Merkmale: ${nf(0).format(sm.oot)}`, sm.ootThread > 0),
+      tile('Werte außerhalb Toleranz', String(sm.oot), sm.oot ? `in ${sm.ootChars.length} BCD-/Steigungsmerkmal(en)` : 'alle BCD- und Steigungswerte in Toleranz', sm.oot > 0),
     );
 
     const bcdBox = h('div', { class: 'chartbox' });
@@ -1602,11 +1611,11 @@ globalThis.SubCore = (function () {
         bcdBox));
     }
     if (hasLead) {
-      const leads = ds.chars.filter((c) => c.cls.group === 'lead' && c.cls.turns && c.cls.from != null);
-      const w0 = leads[0] || ds.chars.find((c) => c.cls.group === 'lead');
-      const sameTurns = leads.every((c) => c.cls.turns === w0.cls.turns && c.nominal === w0.nominal);
+      const leads = ds.chars.filter((c) => c.cls.group === 'lead' && c.cls.from != null && c.nominal > 0);
+      const w0 = leads[0];
+      const sameTurns = leads.every((c) => c.cls.turns && c.cls.turns === w0.cls.turns && c.nominal === w0.nominal);
       charts.append(h('div', null,
-        h('div', { class: 'chart-title' }, h('h3', { text: 'Steigung über Gewindelänge' }), h('span', { class: 'muted', text: sameTurns ? `Längenabweichung je Fenster über ${plGang(w0.cls.turns)} vom Nennmaß ${fmt(w0.nominal, 3)} mm in µm` : `Längenabweichung je Fenster vom jeweiligen Nennmaß in µm (${leads.map((c) => `${c.cls.label.replace('Steigung ', '')}: ${plGang(c.cls.turns)}`).join(', ')})` })),
+        h('div', { class: 'chart-title' }, h('h3', { text: 'Steigung über Gewindelänge' }), h('span', { class: 'muted', text: sameTurns ? `Längenabweichung je Fenster über ${plGang(w0.cls.turns)} vom Nennmaß ${fmt(w0.nominal, 3)} mm in µm` : `Längenabweichung je Fenster von der jeweiligen Nennlänge in µm (${leads.map((c) => `${c.cls.label.replace('Steigung ', '')}: ${fmt(c.nominal, 1)} mm`).join(', ')})` })),
         h('div', { class: 'legend' },
           h('span', { class: 'lg static' }, glyph('gauss'), h('span', { class: 't', text: 'Fenster x̄ · Min–Max' })),
           state.show.ctx ? h('span', { class: 'lg static' }, glyph('ctx'), h('span', { class: 't', text: u.pooled ? 'einzelne Aufträge' : 'andere Aufträge' })) : null,
@@ -1706,7 +1715,7 @@ globalThis.SubCore = (function () {
   function hideTip() { tip.hidden = true; }
   function tipBox(title, rows, foot) {
     return h('div', null, h('div', { class: 'tip-title', text: title }),
-      rows.map((r) => h('div', { class: 'tip-row' }, h('span', { class: 'lk ' + (r.key ? 'k-' + r.key : 'none') }), h('strong', { text: r.value }), h('span', { class: 'tip-label', text: r.label }))),
+      rows.filter(Boolean).map((r) => h('div', { class: 'tip-row' }, h('span', { class: 'lk ' + (r.key ? 'k-' + r.key : 'none') }), h('strong', { text: r.value }), h('span', { class: 'tip-label', text: r.label }))),
       foot ? [].concat(foot).filter(Boolean).map((f) => h('div', { class: 'tip-foot', text: f })) : null);
   }
 
@@ -1873,7 +1882,7 @@ globalThis.SubCore = (function () {
   // ------------------------------------------------------------ Steigungs-Diagramm
   function drawLead(host, u) {
     const ds = state.ds, res = state.res;
-    const catL = ds.chars.filter((c) => c.cls.group === 'lead' && c.cls.from != null).sort((a, b) => a.cls.from - b.cls.from || b.cls.turns - a.cls.turns);
+    const catL = ds.chars.filter((c) => c.cls.group === 'lead' && c.cls.from != null && c.nominal > 0).sort((a, b) => a.cls.from - b.cls.from || b.nominal - a.nominal);
     const xd = gangDomain();
     const U = (v, c) => (v - (c.nominal ?? 0)) * 1000;
     const wins = u.summary.lead.windows;
@@ -1916,9 +1925,9 @@ globalThis.SubCore = (function () {
     if (!wins.length) return;
     crosshair(f, wins.map((w) => ({ x: f.x((w.from + w.to) / 2) })), (i) => {
       const w = wins[i], st = w.stats, c = w.char, d = dp(c);
-      return tipBox(`${c.cls.label} · ${plGang(w.turns)}${c.cls.turnsDerived ? ' (aus Nennmaß abgeleitet)' : ''}`, [
+      return tipBox(`${c.cls.label} · ${w.turns ? plGang(w.turns) : `Nennlänge ${fmt(c.nominal, 1)} mm`}`, [
         { key: 'gauss', value: `${fmtS(U(st.mean, c), 1)} µm`, label: `Länge x̄ ${fmt(st.mean, Math.min(d + 1, 4))} mm` },
-        { value: `${fmt(w.pitch, 5)} mm`, label: `Steigung je Gang${w.nominalPitch != null ? ` (Nenn ${fmt(w.nominalPitch, 3)})` : ''}` },
+        w.pitch != null ? { value: `${fmt(w.pitch, 5)} mm`, label: `Steigung je Gang${w.nominalPitch != null ? ` (Nenn ${fmt(w.nominalPitch, 3)})` : ''}` } : null,
         { value: `${fmt(st.min, d)}–${fmt(st.max, d)}`, label: `Min–Max · s = ${fmt(st.sd, Math.min(d + 1, 4))}` },
       ], `${c.position}: Tol. ${tolText(c, d)} · n = ${st.n}${st.below + st.above ? ` · ⚠ ${st.below + st.above} außerhalb` : ''}`);
     });
@@ -2125,7 +2134,7 @@ globalThis.SubCore = (function () {
     const sp = states.spindel, nu = states.mutter, o = pair.opts;
     const head = h('div', { class: 'sec-head' },
       h('div', null, h('h2', { text: 'Paarung Spindel × Mutter' }),
-        h('p', { class: 'sub', text: 'Alle einbezogenen Spindel-Aufträge (Zeilen) gegen alle einbezogenen Mutter-Aufträge (Spalten). Δ = Mutter − Spindel in µm. BCD: je Spindelgang gegen die Kugelrillen (KR), die über diesen Gang laufen. Steigung: je Mutterfenster gegen alle Spindelfenster gleicher Gangzahl. Zelle anklicken = Paar im Detail.' })));
+        h('p', { class: 'sub', text: 'Alle einbezogenen Spindel-Aufträge (Zeilen) gegen alle einbezogenen Mutter-Aufträge (Spalten). Δ = Mutter − Spindel in µm. BCD: je Spindelgang gegen die Kugelrillen (KR), die über diesen Gang laufen. Steigung: je Mutterfenster gegen alle Spindelfenster gleicher Nennlänge. Zelle anklicken = Paar im Detail.' })));
     const missing = ['spindel', 'mutter'].filter((p) => !states[p].res).map((p) => PART[p].label);
     if (missing.length) {
       sec.replaceChildren(head, h('p', { class: 'empty', text: `Für die Paarung fehlt noch der ${missing.join('- und der ')}-Export. Datei oben hineinziehen – Spindel und Mutter werden automatisch erkannt.` }));
@@ -2204,8 +2213,8 @@ globalThis.SubCore = (function () {
           h('thead', null, h('tr', null, h('th', { text: 'Spindelgang' }), g.krs.map((k) => h('th', { class: 'vis', text: `KR${k}` })))),
           h('tbody', null, g.visibility.map((v) => h('tr', null, h('td', { text: `Gang ${v.gang}` }), g.krs.map((k) => h('td', { class: 'vis', text: v.krs.includes(k) ? '●' : '·' }))))))),
         h('div', null,
-          h('p', { class: 'note', text: g.leadPairs.length ? `Steigung: ${g.leadPairs.map((lp) => `${winLabel(lp.nut)} (${plGang(lp.nut.cls.turns)}) ↔ ${lp.sp.length ? lp.sp.map(winLabel).join(', ') : 'kein Spindelfenster gleicher Länge'}`).join(' · ')}.` : 'Steigung: kein auswertbares Mutterfenster (Gangzahl unbekannt) – Steigung wird nicht verglichen.' }),
-          h('p', { class: 'note', text: 'Standard (Vorgabe): KR1…KR4 in aufeinanderfolgenden Gängen, die Mutter fährt über das ganze gemessene Gewinde – Gang 1 sieht KR1, Gang 3 KR1–3, der vorletzte Gang KR3–4, der letzte Gang nur KR4. Hinweis: Laut Prüfplan der Mutter liegen KR1 und KR4 6 Gänge auseinander (Steigung KR1–KR4 = 17,4 mm); bei Bedarf hier anpassen.' }))));
+          h('p', { class: 'note', text: g.leadPairs.length ? `Steigung (Fenster gleicher Nennlänge): ${g.leadPairs.map((lp) => `${winLabel(lp.nut)} (${fmt(lp.nut.nominal, 1)} mm) ↔ ${lp.sp.length ? lp.sp.map(winLabel).join(', ') : 'kein Spindelfenster gleicher Länge'}`).join(' · ')}.` : 'Steigung: kein auswertbares Mutterfenster – Steigung wird nicht verglichen.' }),
+          h('p', { class: 'note', text: 'Standard (Vorgabe): Die Mutter hat 4 Gänge, KR1…KR4 = Gang 1…4 der Mutter; sie fährt über das ganze gemessene Gewinde der Spindel – Gang 1 sieht KR1, Gang 3 KR1–3, der vorletzte Gang KR3–4, der letzte Gang nur KR4.' }))));
     geoDet.open = pair.geoOpen;
     const msg = h('div', { id: 'pairMsg', class: 'notice', role: 'status', hidden: true });
     sec.replaceChildren(head, controls, msg, tiles, h('div', { class: 'scroll' }, table), legend, h('div', { style: 'margin-top:1rem' }, geoDet));
@@ -2262,7 +2271,7 @@ globalThis.SubCore = (function () {
     const leadTable = h('div', { class: 'scroll' }, h('table', null,
       h('thead', null, h('tr', null, ['Mutter', 'Spindel', 'Mutter L min…max', 'Spindel L min…max', 'Δ [µm]', 'Reserve', 'Status'].map((t, i) => h('th', { class: i >= 2 ? 'num' : null, text: t })))),
       h('tbody', null, cell.lead.items.length ? cell.lead.items.map((it) => h('tr', null,
-        h('td', { text: `${winLabel(it.nutChar)} (${plGang(it.nutChar.cls.turns)})` }),
+        h('td', { text: `${winLabel(it.nutChar)} (${fmt(it.nutChar.nominal, 1)} mm)` }),
         h('td', { text: winLabel(it.spChar) }),
         h('td', { class: 'num', text: `${fmt(it.nutStats.min, 4)} … ${fmt(it.nutStats.max, 4)}` }),
         h('td', { class: 'num', text: `${fmt(it.spStats.min, 4)} … ${fmt(it.spStats.max, 4)}` }),
@@ -2274,7 +2283,7 @@ globalThis.SubCore = (function () {
       h('div', { class: 'duo-eq', style: 'margin-top:1rem' },
         h('div', null, h('div', { class: 'h3row' }, h('h3', { text: 'BCD: Spindelgang × Kugelrille' })), bcdTable,
           h('p', { class: 'note', text: '· = KR läuft nicht über diesen Gang (siehe Sichtbarkeit).' })),
-        h('div', null, h('div', { class: 'h3row' }, h('h3', { text: 'Steigung: Länge über gleiche Gangzahl' })), leadTable)));
+        h('div', null, h('div', { class: 'h3row' }, h('h3', { text: 'Steigung: Fenster gleicher Nennlänge' })), leadTable)));
     drawPairBcd(box, cell);
   }
 
