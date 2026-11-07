@@ -8,7 +8,7 @@ Analyse von **Steigungs- und BCD-Differenzen bei Kugelgewindetrieben**. Läuft k
 |---|---|
 | 1 · Spindel charakterisieren | ✅ |
 | 2 · Mutter charakterisieren | ✅ |
-| 3 · Paarung (Matrix aller Spindel- × Mutter-Aufträge, ΔBCD und ΔSteigung) | ✅ |
+| 3 · Paarung (Matrix aller Spindel- × Mutter-Aufträge, ΔBCD und ΔSteigung; Bewertung Min/Max oder Fähigkeit Cpk_Δ) | ✅ |
 
 ## Benutzung
 
@@ -17,7 +17,7 @@ Analyse von **Steigungs- und BCD-Differenzen bei Kugelgewindetrieben**. Läuft k
 3. **Einlesebericht prüfen.** Dort stehen Material, Prozess, Zeitraum, Hinweise und die *Merkmalszuordnung* (wie die App jedes Merkmal verstanden hat).
 4. Fertigungsaufträge auswählen bzw. ausschließen (Haken). Ausschlüsse merkt sich der Browser.
 5. Steckbrief, Diagramme, Auftragsvergleich und Kennwerte ansehen und bei Bedarf als CSV exportieren (Semikolon, Dezimalkomma, für Excel).
-6. Reiter *3 · Paarung*: Matrix aller einbezogenen Spindel-Aufträge gegen alle einbezogenen Mutter-Aufträge. Eine Zelle anklicken, um das Paar im Detail zu sehen. Die Matrix lässt sich als CSV exportieren.
+6. Reiter *3 · Paarung*: Matrix aller einbezogenen Spindel-Aufträge gegen alle einbezogenen Mutter-Aufträge. Bewertung umschaltbar zwischen *Min/Max Einzelwerte* (Standard) und *Fähigkeit (Cpk_Δ)*. Eine Zelle anklicken, um das Paar im Detail zu sehen; bei „Fähigkeit“ zeigt der Tooltip den Rechenweg. Die Matrix lässt sich als CSV exportieren.
 
 Zum Ausprobieren: `testdata/synthetisch_spindel_P_HEAT.csv` und `testdata/synthetisch_mutter_P_TURN.csv`.
 
@@ -76,12 +76,27 @@ Maßgeblich sind `strPosition` und `strCharTextEN`. Der Prüfplantext (`strRemar
 Ziel ist, im Umlauf befindliche Spindel- und Mutter-Aufträge matrixweise zu prüfen, ob irgendwo ungünstige BCD- oder Steigungsdifferenzen entstehen, und bei Bedarf gezielt zu paaren.
 
 - **Δ = Mutter − Spindel**, in µm.
-- **Bewertung (Standard: Min/Max der Einzelwerte):** Je Paar zählt der ungünstigste Fall aus den Einzelteilen, also Min Mutter − Max Spindel bis Max Mutter − Min Spindel. Umschaltbar auf die Differenz der Auftragsmittel. Eine Bewertung über die Fähigkeit ist vorgesehen, aber noch offen.
+- **Bewertung (Standard: Min/Max der Einzelwerte):** Je Paar zählt der ungünstigste Fall aus den Einzelteilen, also Min Mutter − Max Spindel bis Max Mutter − Min Spindel. Umschaltbar auf die **Fähigkeit (Cpk_Δ)**, siehe unten. Die frühere Bewertung über die Differenz der Auftragsmittel ist entfallen (Vorgabe); ein gespeicherter Wert „Mittelwerte“ fällt auf Min/Max zurück.
 - **BCD (Standard: Gauss, umschaltbar auf Hüll oder Pferch):** Je Spindelgang wird mit jeder Kugelrille (KR) der Mutter verglichen, die über diesen Gang läuft. Hüll und Pferch gibt es bei der Spindel nur an den Gängen 2, 9, 14, 16 und 17.
 - **Steigung:** Verglichen werden Fenster gleicher Nennlänge: das Mutterfenster KR1–KR4 (17,4 mm) gegen jedes Spindelfenster G1–G7, G5–G11 und G9–G15 (je 17,4 mm). Die Einzelfenster KR1–KR2 und KR3–KR4 (2,9 mm) haben auf der Spindel kein Gegenstück.
 - **Grenzen (Standard):** ΔBCD 15…85 µm, ΔSteigung ±25 µm. „Knapp“ heißt, die Reserve zur Grenze liegt unter 5 µm. Alle Werte sind einstellbar und werden im Browser gemerkt.
 - **Sichtbarkeit (Standard, Vorgabe):** Die Mutter hat 4 Gänge, KR1…KR4 = Gang 1…4. Sie fährt über das ganze gemessene Gewinde der Spindel. Bei 17 Gängen heißt das: Gang 1 sieht KR1, Gang 2 KR1–2, Gang 3 KR1–3, die Gänge 4–14 alle KR, Gang 15 KR2–4, Gang 16 KR3–4, Gang 17 KR4. KR-Versatz und Hub sind einstellbar.
 - Ausgeschlossene Aufträge aus den Reitern Spindel und Mutter fehlen auch in der Matrix.
+
+### Bewertung über die Fähigkeit (Cpk_Δ)
+
+Spezifikation und Begründung: `docs/entwurf-faehigkeit.md`; maßgeblich sind die Entscheidungen in `CLAUDE.md` (Statusregel Variante b, keine Stufe 1,33, keine Option „streng“).
+
+- **Je Auftragspaar und sichtbarem Ort** (BCD je Gang/KR nach der Treppe, Steigung je Fenster gleicher Nennlänge) wird die Paarungsfähigkeit der Differenz Δ = Mutter − Spindel berechnet: μ̂ = x̄_M − x̄_S, σ̂_Δ = √(s_M² + s_S²), Cpk_Δ = min(μ̂ − L, U − μ̂) / (3σ̂_Δ).
+- **Streuung je Auftrag** (ν = n − 1), mindestens Auflösung/√12 (Auflösung aus den Nachkommastellen des Merkmals). Aufträge mit weniger als 3 Werten übernehmen die gepoolte Streuung der übrigen einbezogenen Aufträge; deren Freiheitsgrade sind ν = min(d̂₀, Σν) mit d̂₀ nach Smyth (2004). Gibt es weniger als 3 Aufträge mit eigener Streuung, ist der Ort „keine Daten“ (kein stiller Rückfall auf Min/Max). Ausgeschlossene Aufträge gehen nicht in den Pool ein; ein Auftrag mit eigener Streuung hängt nicht von anderen Aufträgen ab.
+- **Untere 95-%-Vertrauensgrenze:** ν_Δ nach Welch-Satterthwaite, ñ = σ̂_Δ² / (s_M²/n_M + s_S²/n_S), SE = √(1/(9ñ) + Ĉ²/(2ν_Δ)) je Seite, Cpk_unten = min(Ĉ − 1,645·SE) (Delta-Methode).
+- **Status je Ort (Variante b):** außerhalb bei Cpk_Δ < 1,00; knapp bei Cpk_Δ ≥ 1,00, wenn die untere Grenze unter 1,00 liegt (Fähigkeit nicht nachgewiesen); sonst ok. Die Reserve für „knapp“ in µm gilt in diesem Modus nicht. Die Zelle übernimmt den schlechtesten Ort (außerhalb > keine Daten > knapp > ok); maßgeblich ist bei Gleichstand der Ort mit kleinerem Cpk_Δ, dann mit kleinerer unterer Grenze.
+- **Angezeigt:** Cpk_Δ (untere Grenze) auf 2 Stellen abgerundet, im Tooltip μΔ, σΔ (Mutter/Spindel mit Quelle eigene/übernommen), ν, μΔ ± 3σΔ, der prädiktive Anteil außerhalb (t-Verteilung, enthält die Schätzunsicherheit, nur als Größenordnung: 2 Stellen, aufgerundet), die Zahl der Teilekombinationen außerhalb (k von N) und Min/Max zum Vergleich.
+- **Hinweise (gehen nicht in den Status ein):** σ* = Streuung übernommen; σ! = Streuung eines Auftrags auffällig größer als die der übrigen (einseitiger F-Test, p < 0,01); E/L = Versatz zwischen Erst- und Letztstücken der Mutter (`strSampleRemark`, Welch-t-Test, p < 0,01). Gerechnet wird immer mit der Gesamtstreuung; die Stichprobe gilt als repräsentativ für den Auftrag (Vorgabe).
+- **Detailansicht:** Cpk-Tabelle Gang × KR, Diagramm μΔ ± 3σΔ mit Min/Max, Steigungstabelle und aufklappbarer Rechenweg (die 5 maßgeblichsten Orte und alle Steigungsfenster) mit allen Zwischenwerten und Formeln.
+- **CSV-Export:** gleiche Kopfzeile bei beiden Bewertungen. Bei „Fähigkeit“ stehen in dBCD_min/max die Hülle μ ± 3σ und in der Reserve die 3σ-Reserve; angehängt sind je Kriterium (`BCD_…`, `Stg_…`) Cpk, untere Grenze, Ort, μΔ, σΔ, σ Mutter/Spindel, ν, Anteil (ppm, am Ort, Maximum und Summe über die Orte), k und N, Quelle der Streuung und Hinweise. Cpk wird abgerundet, ppm aufgerundet.
+- Alle Verteilungsfunktionen (Normal-, t-, F-Verteilung, ln Γ, unvollständige Beta-/Gammafunktion, Digamma, Trigamma und Umkehrung) stehen im Kern, ohne Bibliotheken.
+- Annahmen: zufällige Kombination in der Montage, die Stichprobe vertritt den Auftrag, Normalverteilung im Auftrag. Cpk_Δ ist eine Paarungsfähigkeit der Differenz, keine Teilefähigkeit nach ISO 22514. Das Minimum über alle Orte ist keine gemeinsame 95-%-Aussage.
 
 ## Erwartetes Dateiformat
 
@@ -101,7 +116,7 @@ Das Repository ist öffentlich. **Echte CAQ-Exporte gehören nicht hierher.** `.
 Die Testdaten werden deterministisch erzeugt; alle Kennungen darin sind erfunden:
 
 - `testdata/synthetisch_spindel_P_HEAT.csv` aus `tools/generate-synthetic.js`. Die Merkmalsstruktur entspricht dem echten Prüfplan; übernommen sind dessen Eigenheiten: fehlerhafte Prüfplantexte, ein von Hand nachgetragener Messwert, die Zeitumstellung.
-- `testdata/synthetisch_mutter_P_TURN.csv` aus `tools/generate-synthetic-mutter.js`. Sie enthält nur eine Auswahl von 45 der 338 Merkmale (Gewinde und einige Gegenbeispiele). Übernommen sind die Eigenheiten des echten Exports: Re-Importe mit doppelt kodierten Umlauten, dieselben Teile in zwei Aufträgen, ein Auftrag mit nur einem eigenen Teil, `.GG`-Durchmesser ohne BCD.
+- `testdata/synthetisch_mutter_P_TURN.csv` aus `tools/generate-synthetic-mutter.js`. Sie enthält nur eine Auswahl von 45 der 338 Merkmale (Gewinde und einige Gegenbeispiele). Übernommen sind die Eigenheiten des echten Exports: Re-Importe mit doppelt kodierten Umlauten, dieselben Teile in zwei Aufträgen, ein Auftrag mit nur einem eigenen Teil, `.GG`-Durchmesser ohne BCD. Dazu kommt ein Auftrag mit +8 µm Versatz zwischen Erst- und Letztstücken (für die Hinweise der Fähigkeitsbewertung).
 
 ```bash
 node tools/generate-synthetic.js
@@ -117,11 +132,13 @@ node tools/generate-synthetic-mutter.js
 node tests/run-tests.js
 ```
 
-Geprüft wird der Kern aus `index.html` (`<script id="core">`): CSV, Kodierung, Zahlen, Teiletyp (auch gemischte Dateien), Zuordnung Spindel und Mutter, Kennwerte, Dubletten (Re-Import, Nachmessung, überlappende Exporte, Teile in zwei Aufträgen), Excel-Variante, Paarung (Sichtbarkeit, Min/Max- und Mittelwert-Differenzen, Status, Export). Jeder Fund aus dem Review hat einen eigenen Regressionstest. Optional lässt sich ein echter Export lokal mitprüfen, ohne dass er ins Repository gelangt:
+Geprüft wird der Kern aus `index.html` (`<script id="core">`): CSV, Kodierung, Zahlen, Teiletyp (auch gemischte Dateien), Zuordnung Spindel und Mutter, Kennwerte, Dubletten (Re-Import, Nachmessung, überlappende Exporte, Teile in zwei Aufträgen), Excel-Variante, Paarung (Sichtbarkeit, Min/Max-Differenzen, Status, Export), Verteilungsfunktionen (Referenzwerte und geschlossene Formen) und die Fähigkeitsbewertung (Handbeispiele aus dem Entwurf, Smyth-d̂₀, Übernahme der Streuung, Grenzfälle n = 1 und weniger als 3 Aufträge, Status Variante b, Zellstatus, Unabhängigkeit vom Ausschluss, Erst-/Letztstück-Versatz, Export, Überdeckung der unteren Grenze per Simulation). Jeder Fund aus dem Review hat einen eigenen Regressionstest. Optional lässt sich ein echter Export lokal mitprüfen, ohne dass er ins Repository gelangt:
 
 ```bash
 CAQ_REAL=/pfad/spindel.csv CAQ_REAL_NUT=/pfad/mutter.csv node tests/run-tests.js
 ```
+
+Sind beide gesetzt, gibt der Test zusätzlich die Statusverteilung Min/Max gegen Fähigkeit je Auswertung aus (ohne Kennungen) und vergleicht sie mit Abschnitt 7 des Entwurfs, wenn die Exporte dieselbe Struktur haben (12 Spindel- und 9 Mutter-Aufträge).
 
 ## Aufbau
 

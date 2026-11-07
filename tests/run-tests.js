@@ -819,6 +819,113 @@ test('Export: gleiche Kopfzeile bei beiden Bewertungen; Fähigkeit nur bei „F�
   const r17 = b.find((r) => r.split(';')[4] === '90020017').split(';');
   assert.ok(/Streuung übernommen \(Mutter\)/.test(r17[head.indexOf('BCD_Hinweise')]));
 });
+console.log('Review-Funde Fähigkeit (Regressionstests)');
+test('Merkmal fehlt in einem Auftrag → sichtbare Orte bleiben als „keine Daten“, Zelle nicht passend (Fähigkeit und Min/Max)', () => {
+  const t = rebuildNut((c) => (c[col('strPosition')] === '713.4.GG' && c[col('strSAPOrder')] === '90020020' ? null : c));
+  const d2 = C.buildModel([C.parseCAQ(t, 'ohneKR4.csv')], 'mutter').datasets[0];
+  const nu2 = { ds: d2, res: C.characterize(d2, new Set(d2.batches.map((b) => b.order))) };
+  for (const basis of ['cap', 'minmax']) {
+    const pm = C.pairing(spPair, nu2, { basis });
+    const c = pm.cells.get(pm.spU[0].id + '|90020020');
+    const kr4 = c.bcd.items.filter((it) => it.kr === 4);
+    same(kr4.map((it) => it.gang), [8, 9, 14, 15, 16, 17]);
+    assert.ok(kr4.every((it) => it.status === 'na' && it.mm === null && it.missing[0] === 'Mutter'), basis);
+    assert.ok(['na', 'out'].includes(c.bcd.status), basis);
+    assert.ok(c.status === 'na' || c.status === 'out', `${basis}: nicht passend`);
+    assert.strictEqual(pm.rowOk.get(pm.spU[0].id) <= pm.nuU.length - 1, true);
+    const other = pm.cells.get(pm.spU[0].id + '|90020011');
+    assert.ok(other.bcd.items.every((it) => it.status !== 'na'), 'andere Aufträge unberührt');
+    assert.ok(C.exportPairingCSV(pm, ds, d2).split('\r\n').every((r) => !/undefined|NaN|null/.test(r)));
+  }
+  // Steigung: Fenster fehlt in einem Auftrag
+  const t2 = rebuildNut((c) => (c[col('strPosition')] === '748' && c[col('strSAPOrder')] === '90020020' ? null : c));
+  const d3 = C.buildModel([C.parseCAQ(t2, 'ohne748.csv')], 'mutter').datasets[0];
+  const pm3 = C.pairing(spPair, { ds: d3, res: C.characterize(d3, new Set(d3.batches.map((b) => b.order))) }, { basis: 'cap' });
+  const c3 = pm3.cells.get(pm3.spU[0].id + '|90020020');
+  same([c3.lead.items.length, c3.lead.status], [3, 'na']);
+});
+test('Nachmessungen: ein Teil zählt einmal (Mittel seiner Messungen) – Regel „< 3 Teile“, ν und k von N nach Teilen', () => {
+  const lines = rebuildNut((c) => c).split('\n');
+  const extra = [];
+  for (let i = 1; i < lines.length; i++) {
+    const c = cellsOf(lines[i]);
+    if (c[col('strSAPOrder')] !== '90020017') continue;
+    for (const [k, dv] of [[1, 0.0004], [2, -0.0003]]) {
+      const x = c.slice();
+      x[col('intSampleNo')] = String(30 + k); x[col('intSample')] = String(30 + k); x[col('datInspUTC')] = `2026-11-0${k} 10:00:00`;
+      x[col('value')] = String(Number(x[col('value')]) + dv);
+      extra.push(x.map((v) => (v === 'NA' || /^-?[\d.]+(e-?\d+)?$/i.test(v) || /^\d{4}-\d\d-\d\d /.test(v) || v === 'TRUE' ? v : `"${v}"`)).join(';'));
+    }
+  }
+  const d2 = C.buildModel([C.parseCAQ([...lines, ...extra].join('\n'), 'nachm.csv')], 'mutter').datasets[0];
+  const nu2 = { ds: d2, res: C.characterize(d2, new Set(d2.batches.map((b) => b.order))) };
+  assert.strictEqual(nu2.res.units.get('90020017').chars.get('713.1.GG').n, 3, 'Testaufbau: 3 Messungen eines Teils');
+  const pm = C.pairing(spPair, nu2, { basis: 'cap' });
+  const e = pm.spread.nu.get('713.1.GG').byOrder.get('90020017');
+  same([e.n, e.nValues, e.remeasured, e.src], [1, 3, 2, 'borrowed']);
+  near(e.mean, nu2.res.units.get('90020017').chars.get('713.1.GG').mean, 1e-12, 'Mittel der Messungen');
+  const it = pm.cells.get(pm.spU[0].id + '|90020017').bcd.items[0];
+  same([it.cap.nM, it.cap.N], [1, 10]); assert.ok(it.cap.nEff < 2);
+  assert.ok(it.flags.borrowed.includes('Mutter'));
+  // ohne Teile-UUID (Spindel) zählen die Werte
+  same(C.perPart({ n: 3, mean: 2, sd: 1, values: [1, 2, 3], tags: [null, null, null], pids: [null, null, null] }).n, 3);
+});
+test('Fähigkeit: Reserve der Zelle = kleinste 3σ-Reserve = Reserve der Hülle lo…hi (CSV in sich stimmig)', () => {
+  const mk = (mu, sd) => { const c = { mu, sd, cpk: Math.min(mu - 15, 85 - mu) / (3 * sd), cpkLo: 0, lo: mu - 3 * sd, hi: mu + 3 * sd, pPred: 0.6 }; c.reserve = Math.min(c.lo - 15, 85 - c.hi); return { cap: c }; };
+  const a = C.capAggregate([mk(70, 4), mk(78, 2)]); // Cpk 1,25 (Reserve 3) gegen 1,17 (Reserve 1) – kleinster Cpk hat hier die kleinere Reserve
+  const b = C.capAggregate([mk(52, 10), mk(81.4, 1)]); // Cpk 1,10 mit Reserve 3 (maßgeblich) gegen Cpk 1,20 mit Reserve 0,6
+  assert.strictEqual(b.worst.cap.mu, 52); near(b.reserve, 0.6, 1e-9);
+  for (const x of [a, b]) near(x.reserve, Math.min(x.lo - 15, 85 - x.hi), 1e-12);
+  near(C.capAggregate([mk(70, 4), mk(50, 11)]).reserve, Math.min(70 - 12 - 15, 85 - 70 - 12, 50 - 33 - 15, 85 - 50 - 33), 1e-12);
+  assert.strictEqual(C.capAggregate([mk(50, 1), mk(50, 1)]).pSum, 1, 'Boole-Summe auf 1 begrenzt');
+  for (const c of pmCap.cells.values()) for (const k of ['bcd', 'lead']) if (c[k].lo != null) near(c[k].reserve, Math.min(c[k].lo - (k === 'bcd' ? 15 : -25), (k === 'bcd' ? 85 : 25) - c[k].hi), 1e-9);
+});
+test('Maßgeblicher Ort bei gleichem Status: kleinerer Cpk, dann kleinere untere Grenze; Rangfolge zuerst nach Status', () => {
+  const it = (cpk, cpkLo, tag) => ({ tag, cap: { cpk, cpkLo, lo: 0, hi: 1, reserve: 0, pPred: 0 } });
+  assert.strictEqual(C.capAggregate([it(1.8, 1.3, 'a'), it(1.5, 1.1, 'b')]).worst.tag, 'b');
+  assert.strictEqual(C.capAggregate([it(1.5, 1.2, 'a'), it(1.5, 1.1, 'b')]).worst.tag, 'b');
+  assert.strictEqual(C.capAggregate([it(1.5, 1.1, 'b'), it(1.5, 1.2, 'a')]).worst.tag, 'b');
+  const warn = { worst: {}, status: 'warn', score: 1.6 }, ok = { worst: {}, status: 'ok', score: 1.45 }, out = { worst: {}, status: 'out', score: 0.95 }, na = { worst: {}, status: 'na', score: null };
+  const lt = (x, y) => { const a = C.critRank(x, 'cap'), b = C.critRank(y, 'cap'); return a[0] < b[0] || (a[0] === b[0] && a[1] < b[1]); };
+  assert.ok(lt(warn, ok) && lt(out, warn) && lt(ok, na), 'außerhalb vor knapp vor ok, keine Daten zuletzt');
+  assert.ok(lt({ worst: {}, status: 'ok', score: 1.4 }, ok));
+  same(C.critRank({ worst: {}, reserve: null }, 'minmax'), [Infinity, Infinity]);
+  // synthetisch: minCapBcd ist das Minimum, worstBcd hat den schwersten Status
+  const mins = [...pmCap.cells.values()].map((c) => c.bcd.cpkMin);
+  near(pmCap.minCapBcd.bcd.cpkMin, Math.min(...mins), 0);
+  assert.ok([...pmCap.cells.values()].every((c) => !lt(c.bcd, pmCap.worstBcd.bcd)));
+});
+test('σ!-Diagnose gegen die übrigen Aufträge (ohne den eigenen); k von N exakt auf der Grenze zählt als innerhalb', () => {
+  const t = miniSpread({ A: [1, 2, 3, 4], B: [2, 2.5, 3.5, 4], C: [0, 5, 10, 15], D: [3, 3.1, 3.2, 3.3] }, 1);
+  const all = [...t.byOrder.values()];
+  for (const e of all) {
+    const others = all.filter((x) => x !== e);
+    const s2o = others.reduce((a, x) => a + x.df * x.s2, 0) / others.reduce((a, x) => a + x.df, 0);
+    near(e.sOthers, Math.sqrt(s2o), 1e-12); near(e.F, e.s2 / s2o, 1e-12);
+    near(e.fP, 1 - C.fCdf(e.F, e.df, others.reduce((a, x) => a + x.df, 0)), 1e-12);
+  }
+  assert.ok(t.byOrder.get('C').flagged && !t.byOrder.get('D').flagged);
+  const a = 16.515, b = 16.5, L = (a - b) * 1000;
+  const M = { n: 1, mean: a, sUsed: 0.002, df: 5, src: 'borrowed', values: [a] }, S = { n: 1, mean: b, sUsed: 0.002, df: 5, src: 'borrowed', values: [b] };
+  same([C.capDiff(M, S, L, 85).kOut, C.capDiff(M, S, L + 1e-6, 85).kOut], [0, 1]);
+});
+test('Rundung: ppm ohne Exponent und Gleitkomma-Reste, p-Werte nie auf die Schwelle gerundet', () => {
+  assert.strictEqual(C.ceilSig(999999.7, 3), 1000000);
+  assert.strictEqual(C.ceilSig(1e6, 3), 1000000);
+  assert.strictEqual(C.ceilSig(0.11, 2), 0.11);
+  assert.strictEqual(C.ceilSig(9.971e-7, 3), 9.98e-7);
+  assert.ok(C.ceilSig(161.14, 2) === 170 && C.ceilSig(4.619, 3) === 4.62);
+  assert.strictEqual(C.floorSig(0.0096, 2), 0.0096);
+  assert.strictEqual(C.floorSig(0.009996, 2), 0.0099);
+  assert.strictEqual(C.floorSig(0.0234, 2), 0.023);
+  const rows = C.exportPairingCSV(pmCap, ds, nds).trim().split('\r\n');
+  const head = rows[0].split(';');
+  for (const r of rows.slice(1)) {
+    const x = r.split(';');
+    for (const k of ['BCD_Anteil_ppm', 'BCD_Anteil_ppm_max', 'BCD_Anteil_ppm_Summe', 'Stg_Anteil_ppm']) assert.ok(/^\d+(,\d+)?$/.test(x[head.indexOf(k)]), `${k}: ${x[head.indexOf(k)]}`);
+    assert.ok(!/p 0,01\)/.test(r), 'kein markierter p-Wert als 0,01');
+  }
+});
 test('Überdeckung der unteren 95-%-Grenze (2000 Läufe, homogen, eigene Streuung): 0,93…0,97 (Test m)', () => {
   const g = gaussGen(20261107);
   const sM = 2, sS = 2, sd = Math.sqrt(8), trueCpk = 1.33, U = 85, mu = U - 3 * trueCpk * sd;
