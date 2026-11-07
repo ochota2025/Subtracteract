@@ -184,8 +184,10 @@ table.pm td.sum,table.pm th.sum{text-align:center;color:var(--text2)}
 td.vis{text-align:center}
 .pmlegend{display:flex;flex-wrap:wrap;gap:.3rem 1.1rem;margin:.6rem 0 0;font-size:.9rem;color:var(--text2);align-items:center}
 .pmlegend span{display:inline-flex;gap:.4rem;align-items:center}
-.mks{display:inline-flex;gap:.2rem;margin-left:.15rem}
-.mk{display:inline-block;padding:0 .3rem;border-radius:.35rem;background:var(--surface2);border:1px solid var(--border);color:var(--text2);font-size:.75rem;line-height:1.35;font-variant-numeric:normal}
+.mks{display:inline-flex;gap:.15rem;margin-left:.1rem}
+.mk{display:inline-block;padding:0 .22rem;border-radius:.3rem;background:var(--surface2);border:1px solid var(--border);color:var(--text2);font-size:.72rem;line-height:1.3;font-variant-numeric:normal}
+table.pm .cl{flex-wrap:wrap;row-gap:0}
+.cl-main{display:inline-flex;align-items:center;gap:.35rem;white-space:nowrap}
 details.hints{margin:0 0 1rem;padding:.5rem .7rem;border-radius:.57rem;background:var(--surface2)}
 details.hints ul,.hintlist{margin:.2rem 0 0;padding-left:1.2rem;font-size:.9rem;color:var(--text2)}
 details.hints li,.hintlist li{margin:.15rem 0;overflow-wrap:anywhere}
@@ -2545,7 +2547,9 @@ globalThis.SubCore = (function () {
   const isCap = () => !!(pair.pm && pair.pm.opts.basis === 'cap');
   const stL = (st) => (isCap() ? ST_LABEL_CAP : ST_LABEL)[st];
   const stIcon = (st) => h('i', { class: 'ic ' + st, 'aria-hidden': 'true', text: ST_ICON[st] });
-  const fmtN = (v) => fmt(v, Number.isInteger(v) ? 0 : 1);
+  /** Stellenzahl eines eingegebenen Werts (höchstens 3), damit eine Grenze überall gleich angezeigt wird. */
+  const limDp = (v) => { for (let d = 0; d < 3; d++) if (Math.abs(v * Math.pow(10, d) - Math.round(v * Math.pow(10, d))) < 1e-9) return d; return 3; };
+  const fmtN = (v) => fmt(v, limDp(v));
   /*
    * Anzeige auf 0,1 µm, immer zur Grenze hin gerundet (Untergrenze abrunden, Obergrenze aufrunden, Reserve abrunden).
    * So widersprechen angezeigte Zahl und Status nie (z. B. Reserve 4,96 µm → „+4,9“, nicht „+5,0“ neben „knapp“).
@@ -2626,18 +2630,22 @@ globalThis.SubCore = (function () {
     if (it.flags.el.length) m.push(['E/L', `Versatz Erst-/Letztstücke (${it.flags.el.join(', ')})`]);
     return m.length ? h('span', { class: 'mks' }, m.map(([t, ti]) => h('span', { class: 'mk', title: ti, text: t }))) : null;
   }
+  /** Kleinste untere Grenze mit Ort, wenn sie an einem anderen Ort liegt als am maßgeblichen (Entwurf 2.4). */
+  const loMinText = (a) => (a.minLoAt && a.worst && a.minLoAt !== a.worst && a.worst.cap && a.cpkLoMin < a.worst.cap.cpkLo ? `kleinste untere Grenze ${fmtCpk(a.cpkLoMin)} an ${C.pairLoc(a.minLoAt)}` : null);
   /** Zusammenfassung eines Kriteriums über alle Orte (Fähigkeit). */
   function capAggText(a) {
     if (!a.items.length) return 'keine vergleichbaren Werte';
     const r = [`${a.items.length} ${a.items.length === 1 ? 'Ort' : 'Orte'}: ${a.nOut} außerhalb, ${a.nWarn} knapp${a.nNa ? `, ${a.nNa} ohne Daten` : ''}`];
     if (a.pMax != null) r.push(`mind. ein Ort außerhalb ≈ ${fmtP(a.pMax)} … ${fmtP(a.pSum)}`);
     if (a.minAt && a.minAt !== a.worst) r.push(`kleinster Cpk_Δ ${fmtCpk(a.cpkMin)} an ${C.pairLoc(a.minAt)}`);
+    const lo = loMinText(a);
+    if (lo) r.push(lo);
     return r.join(' · ');
   }
 
   /** Zahlenfeld als Text: Komma oder Punkt; ungültige Eingaben werden sichtbar abgelehnt und der wirksame Wert bleibt stehen. */
   function numInput(label, value, onSet, step, check) {
-    const shown = fmt(value, Number.isInteger(value) ? 0 : (Math.round(value * 100) % 10 ? 2 : 1)).replace('−', '-');
+    const shown = fmt(value, limDp(value)).replace('−', '-');
     const inp = h('input', { type: 'text', inputmode: 'decimal', class: 'numin', 'aria-label': label, autocomplete: 'off', spellcheck: 'false' });
     inp.value = shown;
     const reject = (msg) => {
@@ -2647,6 +2655,7 @@ globalThis.SubCore = (function () {
     inp.addEventListener('change', () => {
       const raw = String(inp.value).trim().replace(/\s/g, '').replace('−', '-');
       if (!/^[+-]?(\d+([.,]\d*)?|[.,]\d+)$/.test(raw)) { reject(`„${inp.value}“ ist keine Zahl – ${label} bleibt ${shown}.`); return; }
+      if (/[.,]\d{4,}$/.test(raw)) { reject(`Höchstens 3 Nachkommastellen – ${label} bleibt ${shown}.`); return; }
       const v = Number(raw.replace(',', '.'));
       const err = check ? check(v) : null;
       if (err) { reject(err); return; }
@@ -2769,15 +2778,16 @@ globalThis.SubCore = (function () {
     // Matrix
     const capLine = (lab, a) => {
       const w = a.worst;
-      return h('div', { class: 'cl' }, stIcon(a.status), h('span', { class: 'cl-l', text: lab }), h('span', { class: 'cl-v', text: w ? cpkPair(w.cap) : '–' }), capMarks(w));
+      return h('div', { class: 'cl' }, h('span', { class: 'cl-main' }, stIcon(a.status), h('span', { class: 'cl-l', text: lab }), h('span', { class: 'cl-v', text: w ? cpkPair(w.cap) : '–' })), capMarks(w));
     };
-    const capAria = (lab, a) => (a.worst ? `${lab} ${ST_LABEL_CAP[a.status]}${a.worst.cap ? `, Cpk_Δ ${fmtCpk(a.worst.cap.cpk)}, untere Grenze ${fmtCpk(a.worst.cap.cpkLo)}` : ''} an ${C.pairLoc(a.worst)}` : `${lab} keine Daten`);
+    const markWords = (it) => (it && it.flags ? [it.flags.borrowed.length && 'Streuung übernommen', it.flags.sigma.length && 'Streuung auffällig', it.flags.el.length && 'Versatz Erst-/Letztstücke'].filter(Boolean) : []);
+    const capAria = (lab, a) => (a.worst ? `${lab} ${ST_LABEL_CAP[a.status]}${a.worst.cap ? `, Cpk_Δ ${fmtCpk(a.worst.cap.cpk)}, untere Grenze ${fmtCpk(a.worst.cap.cpkLo)}` : ''} an ${C.pairLoc(a.worst)}${markWords(a.worst).map((w) => `, ${w}`).join('')}` : `${lab} keine Daten`);
     const capTitle = (lab, a) => `${lab} – ${ST_LABEL_CAP[a.status]}: ${a.worst ? capItemText(a.worst) : 'keine vergleichbaren Werte'}\n${capAggText(a)}`;
     const cellNode = (cell) => {
       const sel = pair.sel === cell.key;
       const line = (lab, a, f) => h('div', { class: 'cl' }, stIcon(a.status), h('span', { class: 'cl-l', text: lab }), h('span', { class: 'cl-v', text: f(a) }));
       return h('td', {
-        class: `cell st-${cell.status}${sel ? ' sel' : ''}`, tabindex: 0, role: 'button', 'aria-pressed': String(sel), 'data-key': cell.key,
+        class: `cell st-${cell.status}${cap ? ' cap' : ''}${sel ? ' sel' : ''}`, tabindex: 0, role: 'button', 'aria-pressed': String(sel), 'data-key': cell.key,
         'aria-label': cap ? `Spindel ${cell.s.id} mit Mutter ${cell.n.id}: ${capAria('BCD', cell.bcd)}; ${capAria('Steigung', cell.lead)}`
           : `Spindel ${cell.s.id} mit Mutter ${cell.n.id}: BCD ${ST_LABEL[cell.bcd.status]} ${rngB(cell.bcd)} µm, Steigung ${ST_LABEL[cell.lead.status]} ${rngL(cell.lead)} µm`,
         title: cap ? `Spindel ${cell.s.id} × Mutter ${cell.n.id}\n\n${capTitle(`BCD (${fitL})`, cell.bcd)}\n\n${capTitle('Steigung', cell.lead)}` : null,
@@ -2856,6 +2866,7 @@ globalThis.SubCore = (function () {
       const d = [`${ST_LABEL_CAP[a.status]} · maßgeblich ${C.pairLoc(w)}`];
       if (c) d.push(`μΔ ${fmt(c.mu, 1)} µm, ± 3σΔ ${rng(c.lo, c.hi, capLim(w))} µm`, `außerhalb erwartet ≈ ${fmtP(c.pPred)}`, `${c.kOut} von ${c.N} Kombinationen außerhalb`);
       else d.push(capReason(w));
+      if (loMinText(a)) d.push(loMinText(a));
       if (a.items.length > 1 && a.pMax != null) d.push(`mind. ein Ort außerhalb ≈ ${fmtP(a.pMax)} … ${fmtP(a.pSum)}`);
       return tile(lab, c ? `Cpk_Δ ${cpkPair(c)}` : '–', d.join(' · '), a.status === 'out');
     };
@@ -2952,7 +2963,7 @@ globalThis.SubCore = (function () {
           h('td', { class: 'num', text: fmt(mS.mean, 5) }), h('td', { class: 'num', text: fmt(sS.mean, 5) }),
           h('td', { class: 'num', text: sTxt(c, 'M') }), h('td', { class: 'num', text: sTxt(c, 'S') }),
           h('td', { class: 'num', text: fmt(c.mu, 2) }), h('td', { class: 'num', text: fmt(c.sd, 3) }), h('td', { class: 'num', text: fmtNu(c.nu) }), h('td', { class: 'num', text: fmt(c.nEff, 2) }),
-          h('td', { class: 'num', text: fmt(c.cpkL, 3) }), h('td', { class: 'num', text: fmt(c.cpkU, 3) }), h('td', { class: 'num', text: `${fmt(c.seL, 3)} / ${fmt(c.seU, 3)}` }),
+          h('td', { class: 'num', text: fmt(C.floorTo(c.cpkL, 3), 3) }), h('td', { class: 'num', text: fmt(C.floorTo(c.cpkU, 3), 3) }), h('td', { class: 'num', text: `${fmt(c.seL, 3)} / ${fmt(c.seU, 3)}` }),
           h('td', { class: 'num', text: fmtCpk(c.cpk) }), h('td', { class: 'num', text: fmtCpk(c.cpkLo) }), h('td', { class: 'num', text: fmtP(c.pPred) }), h('td', { class: 'num', text: fmtP(c.pPlug) }),
           h('td', null, h('span', { class: 'cl' }, stIcon(it.status), ST_LABEL_CAP[it.status])));
       }))));
