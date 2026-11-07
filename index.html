@@ -46,8 +46,17 @@ body{margin:0;background:var(--page);color:var(--text);font:1rem/1.45 system-ui,
 .brand p{margin:0;color:var(--text2);font-size:.9rem}
 .logo{width:2.3rem;height:2.3rem;border-radius:.57rem;background:var(--s1);color:#fff;display:grid;place-items:center;font-size:1.43rem;font-weight:600;flex:none}
 .steps{display:flex;gap:.43rem;flex-wrap:wrap}
-.step{font-size:.9rem;padding:.28rem .7rem;border-radius:999px;border:1px solid var(--border);color:var(--muted)}
-.step.on{background:var(--text);color:var(--surface);border-color:transparent}
+.step{font:inherit;font-size:.9rem;padding:.28rem .8rem;border-radius:999px;border:1px solid var(--border);color:var(--text2);background:var(--surface);cursor:pointer}
+button.step:hover{background:var(--hover)}
+button.step:focus-visible{outline:2px solid var(--s1);outline-offset:1px}
+.step.on,.step.on:hover{background:var(--text);color:var(--surface);border-color:transparent}
+.step.off{color:var(--muted);cursor:default}
+.step .cnt{display:inline-block;margin-left:.4rem;padding:0 .4rem;border-radius:999px;background:var(--selwash);color:var(--text);font-size:.8rem}
+.step.on .cnt{background:rgba(255,255,255,.22);color:inherit}
+.notice{margin-top:.7rem;padding:.5rem .7rem;border-radius:.57rem;background:var(--selwash);color:var(--text);font-size:.93rem}
+.filters{display:flex;gap:.57rem .85rem;flex-wrap:wrap;align-items:center;margin:0 0 .7rem}
+.filters input[type=search]{font:inherit;font-size:.93rem;padding:.43rem .57rem;border-radius:.57rem;border:1px solid var(--border);background:var(--surface);color:var(--text);min-width:16rem;max-width:100%}
+.filters label{display:inline-flex;gap:.43rem;align-items:center;color:var(--text2);font-size:.93rem;cursor:pointer}
 main{padding-top:var(--gap);padding-bottom:3.4rem;display:grid;grid-template-columns:minmax(0,1fr);gap:var(--gap);align-items:start}
 .card{background:var(--surface);border:1px solid var(--border);border-radius:.85rem;padding:1.15rem 1.3rem;min-width:0}
 .sec-head{display:flex;align-items:flex-start;justify-content:space-between;gap:.7rem 1.15rem;flex-wrap:wrap;margin-bottom:.85rem}
@@ -163,10 +172,10 @@ input[type=checkbox]{accent-color:var(--s1);width:1.15rem;height:1.15rem;margin:
       <span class="logo" aria-hidden="true">−</span>
       <div><h1>Subtracteract</h1><p>Kugelgewindetrieb · Steigung &amp; BCD</p></div>
     </div>
-    <nav class="steps" aria-label="Arbeitsschritte">
-      <span class="step on" aria-current="step">1 · Spindel</span>
-      <span class="step" title="folgt">2 · Mutter</span>
-      <span class="step" title="folgt">3 · Paarung</span>
+    <nav class="steps" id="steps" aria-label="Arbeitsschritte">
+      <button type="button" class="step on" data-part="spindel" aria-current="page">1 · Spindel</button>
+      <button type="button" class="step" data-part="mutter">2 · Mutter</button>
+      <span class="step off" title="folgt">3 · Paarung</span>
     </nav>
   </div>
 </header>
@@ -174,8 +183,8 @@ input[type=checkbox]{accent-color:var(--s1);width:1.15rem;height:1.15rem;margin:
 <main class="wrap">
   <section class="card" id="loadSec" aria-label="Daten laden">
     <div class="drop" id="drop" tabindex="0" role="button" aria-label="CAQ-Export der Spindel auswählen">
-      <strong>CAQ-Export der Spindel hierher ziehen</strong>
-      <span>oder klicken zum Auswählen · .csv · mehrere Dateien möglich</span>
+      <strong>CAQ-Export hierher ziehen</strong>
+      <span>oder klicken zum Auswählen · .csv · mehrere Dateien möglich · Spindel und Mutter werden automatisch erkannt</span>
       <small>Die Dateien werden nur lokal in diesem Browser gelesen – nichts wird hochgeladen.</small>
     </div>
     <input type="file" id="file" accept=".csv,.txt,text/csv" multiple hidden>
@@ -251,6 +260,20 @@ globalThis.SubCore = (function () {
   function decodeR(s) {
     return s.indexOf('<U+') < 0 ? s : s.replace(R_ESC, (m, hex) => String.fromCodePoint(parseInt(hex, 16)));
   }
+  /**
+   * Doppelt kodierte Umlaute reparieren: UTF-8-Bytes, die als Latin-1 gelesen wurden
+   * („ErststÃ¼ckprÃ¼fung“ → „Erststückprüfung“). Nur wenn das Ergebnis gültiges UTF-8 ist.
+   */
+  function fixMojibake(s) {
+    if (!/[Â-ô][\u0080-¿]/.test(s)) return s;
+    const bytes = new Uint8Array(s.length);
+    for (let i = 0; i < s.length; i++) {
+      const c = s.charCodeAt(i);
+      if (c > 255) return s;
+      bytes[i] = c;
+    }
+    try { return new TextDecoder('utf-8', { fatal: true }).decode(bytes); } catch (e) { return s; }
+  }
 
   const MISSING = new Set(['', 'NA', 'NaN', 'NULL', 'null', 'N/A', '#N/A']);
   /** Zahl lesen: null = fehlt (NA/leer), NaN = nicht lesbar. Dezimalkomma wird akzeptiert. */
@@ -314,12 +337,12 @@ globalThis.SubCore = (function () {
   const COLUMNS = {
     material: 'strMaterialNo', materialText: 'strMaterialtext', inspOrder: 'strInspectionOrder',
     order: 'strSAPOrder', batch: 'strBatchNo', processNo: 'strProcessNo', process: 'strProcess',
-    processAll: 'strProcessAll', machine: 'strMachineText', charNo: 'strCharNo', charText: 'strCharTextEN',
-    unit: 'strUnit', position: 'strPosition', remark: 'strRemark', orderInIP: 'intOrderInIP',
+    processAll: 'strProcessAll', machineNo: 'strMachineNo', machine: 'strMachineText', charNo: 'strCharNo',
+    charText: 'strCharTextEN', unit: 'strUnit', position: 'strPosition', remark: 'strRemark', orderInIP: 'intOrderInIP',
     planVersion: 'intInspectionPlanVersion', nominal: 'decNominal', lsl: 'decLTol', usl: 'decUTol',
     value: 'value', sampleNo: 'intSampleNo', sample: 'intSample', tool: 'intTool', gauge: 'strGaugeNo',
     measNo: 'intMeasurementNo', measNoSample: 'intMeasurementNoSample', sampleData: 'intSampleData',
-    tsUTC: 'datInspUTC', tsLocal: 'datInsp',
+    tsUTC: 'datInspUTC', tsLocal: 'datInsp', uuid: 'strUUID', sampleRemark: 'strSampleRemark',
   };
   const REQUIRED = ['charText', 'position', 'value'];
   const RECOMMENDED = ['material', 'materialText', 'batch', 'unit', 'remark', 'nominal', 'lsl', 'usl', 'tsLocal'];
@@ -327,7 +350,7 @@ globalThis.SubCore = (function () {
   /** Eine Datei lesen. Liefert Messwerte (eine Zeile = ein Wert) und Hinweise. */
   function parseCAQ(text, fileName) {
     const issues = new Issues();
-    const res = { fileName, delimiter: null, encoding: null, rowCount: 0, records: [], issues, header: [], fatal: null };
+    const res = { fileName, delimiter: null, encoding: null, rowCount: 0, records: [], issues, header: [], fatal: null, partType: null };
     if (!text || !text.trim()) { res.fatal = 'Die Datei ist leer.'; return res; }
     const delimiter = res.delimiter = detectDelimiter(text);
     const { rows, lines } = parseCSV(text, delimiter);
@@ -345,6 +368,18 @@ globalThis.SubCore = (function () {
 
     const get = (row, k) => (idx[k] >= 0 && idx[k] < row.length ? row[idx[k]] : '');
     const str = (row, k) => get(row, k).trim();
+    const fixCache = new Map();
+    const txt = (row, k) => {
+      const raw = str(row, k);
+      let v = fixCache.get(raw);
+      if (v === undefined) {
+        const d = decodeR(raw);
+        v = fixMojibake(d);
+        if (v !== d) issues.add('info', 'mojibake', 'Doppelt kodierte Umlaute repariert', `„${d}“ → „${v}“`);
+        fixCache.set(raw, v);
+      }
+      return v;
+    };
     for (let r = 1; r < rows.length; r++) {
       const row = rows[r];
       if (row.length === 1 && row[0].trim() === '') continue;
@@ -359,7 +394,7 @@ globalThis.SubCore = (function () {
       const inspOrder = str(row, 'inspOrder');
       if (!order && inspOrder) order = inspOrder.split('/')[0].trim();
       if (!order) { issues.add('warn', 'no-order', 'Kein Fertigungsauftrag – Zeile übersprungen', where); continue; }
-      let position = decodeR(str(row, 'position'));
+      let position = txt(row, 'position');
       if (!position) { issues.add('warn', 'no-pos', 'Keine Merkmalsposition – Zeile übersprungen', where); continue; }
       if (/^\d+,\d+$/.test(position)) {
         issues.add('warn', 'excel-pos', 'Position mit Dezimalkomma – die Datei wurde vermutlich in Excel geöffnet und gespeichert. Das Komma wird als Punkt gelesen, abgeschnittene Nullen (449.10 → 449,1) lassen sich aber nicht erkennen. Bitte den Original-Export verwenden.', position);
@@ -369,27 +404,56 @@ globalThis.SubCore = (function () {
       if ([nominal, lsl, usl].some(Number.isNaN)) issues.add('warn', 'tol-nan', 'Nennmaß oder Toleranz ist keine Zahl – als fehlend behandelt', where);
       const clean = (v) => (Number.isNaN(v) ? null : v);
       const gauge = str(row, 'gauge');
+      const uuid = str(row, 'uuid');
       const rec = {
         file: fileName, line: lines[r],
-        material: str(row, 'material'), materialText: decodeR(str(row, 'materialText')),
+        material: str(row, 'material'), materialText: txt(row, 'materialText'),
         order, inspOrder, batch: str(row, 'batch'),
         process: str(row, 'processAll') || [str(row, 'processNo'), str(row, 'process')].filter(Boolean).join('/'),
-        machine: decodeR(str(row, 'machine')),
-        charNo: str(row, 'charNo'), charText: decodeR(str(row, 'charText')), unit: decodeR(str(row, 'unit')),
-        position, remark: decodeR(str(row, 'remark')),
+        machineNo: str(row, 'machineNo'), machine: txt(row, 'machine'),
+        charNo: str(row, 'charNo'), charText: txt(row, 'charText'), unit: txt(row, 'unit'),
+        position, remark: txt(row, 'remark'),
         orderInIP: clean(parseNum(get(row, 'orderInIP'))), planVersion: str(row, 'planVersion'),
         nominal: clean(nominal), lsl: clean(lsl), usl: clean(usl),
         value, decimals: decimalsOf(rawVal),
         sampleNo: str(row, 'sampleNo'), sample: str(row, 'sample'), sampleData: str(row, 'sampleData'),
         measNo: str(row, 'measNo'), measNoSample: str(row, 'measNoSample'), tool: str(row, 'tool'),
-        gauge: gauge === 'NA' ? '' : gauge,
+        gauge: gauge === 'NA' ? '' : gauge, uuid: uuid === 'NA' ? '' : uuid,
+        sampleRemark: (() => { const s = txt(row, 'sampleRemark'); return s === 'NA' ? '' : s; })(),
         tsLocal: parseTs(get(row, 'tsLocal')), tsUTC: parseTs(get(row, 'tsUTC')),
       };
       if (idx.gauge >= 0 && !rec.gauge) issues.add('info', 'manual', 'Messwerte ohne Messmittel-Nr. (vermutlich von Hand nachgetragen) – werden normal ausgewertet', `${order} · ${position}`);
       res.records.push(rec);
     }
     if (!res.records.length) res.fatal = 'Keine verwertbaren Messwerte gefunden.';
+    else res.partType = detectPartType(res.records).type;
     return res;
+  }
+
+  // -------------------------------------------------- Teiletyp (Spindel/Mutter)
+  /**
+   * Erkennt aus den Merkmalen, ob ein Spindel- oder Mutter-Export vorliegt.
+   * Mutter: Prüfplantexte mit Kugelrillen „KR1…KR4“. Spindel: „Gang n“ bzw. Steigungsfenster „G1-G7“.
+   * Der Materialtext ist nur ein Zusatzhinweis (beim Mutter-Export steht dort nur die Nummer).
+   */
+  function detectPartType(records) {
+    const seen = new Set();
+    let nut = 0, spindle = 0;
+    let text = '';
+    for (const r of records) {
+      if (!text && r.materialText) text = r.materialText;
+      if (seen.has(r.position)) continue;
+      seen.add(r.position);
+      const rem = r.remark || '';
+      if (/\bKR\s*\d/i.test(rem)) nut++;
+      if (/\bGang\s*\d+/i.test(rem) || /\bG\s*\d+\s*[-–]\s*G\s*\d+/i.test(rem)) spindle++;
+    }
+    if (/mutter|\bnut\b/i.test(text)) nut += 5;
+    if (/spindel|spindle/i.test(text)) spindle += 5;
+    let type = null;
+    if (nut > spindle) type = 'mutter';
+    else if (spindle > nut) type = 'spindel';
+    return { type, nut, spindle, materialText: text };
   }
 
   // -------------------------------------------------- Merkmalszuordnung
@@ -397,24 +461,70 @@ globalThis.SubCore = (function () {
   const FIT_LABEL = { gauss: 'Gauss', huell: 'Hüll', pferch: 'Pferch' };
   const TEXT_DE = {
     diameter: 'Durchmesser', roundness: 'Rundheit', concentricity: 'Konzentrizität', runout: 'Rundlauf',
-    'total runout': 'Gesamtlauf', cylindricity: 'Zylindrizität', length: 'Länge',
+    'total runout': 'Gesamtlauf', 'axial runout': 'Planlauf', cylindricity: 'Zylindrizität', length: 'Länge',
+    distance: 'Abstand', radius: 'Radius', angle: 'Winkel', position: 'Position', offset: 'Versatz',
+    parallelism: 'Parallelität', perpendicularity: 'Rechtwinkligkeit', flatness: 'Ebenheit',
+    'form random line': 'Linienform', 'surface hardness': 'Oberflächenhärte', 'case hardness depth': 'Einsatzhärtetiefe',
+  };
+  const GENERIC_GROUP = {
+    diameter: 'dia', radius: 'len', length: 'len', distance: 'len',
+    position: 'pos', offset: 'pos', concentricity: 'pos',
+    runout: 'orient', 'axial runout': 'orient', 'total runout': 'orient', parallelism: 'orient', perpendicularity: 'orient', angle: 'orient',
+    roundness: 'form', cylindricity: 'form', flatness: 'form', 'form random line': 'form',
   };
   const GROUPS = [
     { id: 'lead', label: 'Steigung' },
     { id: 'bcd-gauss', label: 'BCD Gauss' }, { id: 'bcd-huell', label: 'BCD Hüll' }, { id: 'bcd-pferch', label: 'BCD Pferch' },
+    { id: 'bcdx', label: 'BCD-Kennzahlen' },
     { id: 'cyl', label: 'Zylindrizität Gewinde' }, { id: 'shaft', label: 'Rändel / Lage' },
-    { id: 'heat', label: 'Wärmebehandlung' }, { id: 'other', label: 'Sonstige' },
+    { id: 'heat', label: 'Wärmebehandlung' },
+    { id: 'dia', label: 'Durchmesser' }, { id: 'len', label: 'Längen / Abstände / Radien' }, { id: 'form', label: 'Form' },
+    { id: 'pos', label: 'Lage / Koaxialität / Versatz' }, { id: 'orient', label: 'Lauf / Richtung / Winkel' },
+    { id: 'other', label: 'Sonstige' },
   ];
+  const THREAD_GROUPS = new Set(['lead', 'bcd', 'bcdx', 'cyl']);
 
   /**
-   * Ordnet ein Merkmal der Spindel zu. Maßgeblich ist die Position (strPosition) und der
-   * englische Merkmalstext – der Prüfplantext (strRemark) wird nur für die Steigungsfenster
-   * gelesen und sonst nur gegengeprüft, weil er im Export Kopierfehler enthält.
+   * Ordnet ein Merkmal ein. Maßgeblich sind Position (strPosition) und Merkmalstext (strCharTextEN);
+   * der Prüfplantext (strRemark) wird nur dort gelesen, wo die Position allein nicht reicht
+   * (Steigungsfenster, „BCD“ bei der Mutter), und sonst gegengeprüft.
    */
-  function classify(c) {
+  function classify(c, type) {
     const t = (c.charText || '').toLowerCase().trim();
     const pos = c.position, rem = c.remark || '';
+    const isBcdText = /\bBCD\b/i.test(rem);
     let m;
+    // BCD-Kennzahlen (Spanne über die Rillen, Kopie eines anderen Merkmals mit eigener Toleranz)
+    if (t === 'diameter' && isBcdText && /range|spanne/i.test(rem)) {
+      return { group: 'bcdx', sub: 'bcdx', label: `BCD-Spanne · ${rem.replace(/^BCD\s*/i, '')}`.trim() };
+    }
+    if (t === 'diameter' && isBcdText && (m = rem.match(/wie\s+(\d+(?:\.\d+)*\.G[GNX])/i))) {
+      return { group: 'bcdx', sub: 'bcdx', copyOf: m[1], label: `BCD-Kopie von ${m[1]} (eigene Toleranz)` };
+    }
+    if (type === 'mutter') {
+      if (t === 'diameter' && isBcdText && (m = pos.match(/^(\d+)(?:\.(\d+))?\.(G[GNX])$/i))) {
+        const code = m[3].toUpperCase(), fit = FIT[code], kr = m[2] ? +m[2] : null;
+        const out = kr
+          ? { group: 'bcd', sub: 'bcd-' + fit, fit, kr, label: `BCD ${FIT_LABEL[fit]} · KR${kr}` }
+          : { group: 'bcd', sub: 'bcd-' + fit, fit, kr: null, overall: true, label: `BCD ${FIT_LABEL[fit]} · Zylinder (gesamt)` };
+        const rk = rem.match(/\bKR\s*(\d+)/i), rf = rem.match(/\bG([GNX])\b/i);
+        if ((rk && kr != null && +rk[1] !== kr) || (rf && 'G' + rf[1].toUpperCase() !== code)) out.note = `${pos}: Text „${rem}“`;
+        return out;
+      }
+      if ((t === 'distance' || t === 'length') && /steigung/i.test(rem) && (m = rem.match(/KR\s*(\d+)\s*[-–—]\s*KR\s*(\d+)/i)) && +m[2] > +m[1]) {
+        return { group: 'lead', sub: 'lead', fromKr: +m[1], toKr: +m[2], label: `Steigung KR${+m[1]}–KR${+m[2]}` };
+      }
+      if (t === 'cylindricity' && /gew/i.test(rem)) {
+        const rk = rem.match(/\bKR\s*(\d+)/i);
+        if (rk) return { group: 'cyl', sub: 'cyl', kr: +rk[1], label: `Zylindrizität Gewinde · KR${+rk[1]}` };
+        if (/gesamt/i.test(rem)) return { group: 'cyl', sub: 'cyl', kr: null, label: 'Zylindrizität Gewinde · gesamt' };
+        return { group: 'cyl', sub: 'cyl', kr: null, label: `Zylindrizität Gewinde · ${/max/i.test(rem) ? 'Max. der KR' : pos}` };
+      }
+      if (t.includes('hardness')) return { group: 'heat', sub: 'heat', label: t.includes('depth') ? 'Einsatzhärtetiefe' : 'Oberflächenhärte' };
+      const g = GENERIC_GROUP[t] || 'other';
+      return { group: g, sub: g, label: rem || `${TEXT_DE[t] || c.charText || 'Merkmal'} ${pos}` };
+    }
+    // Spindel (und unbekannt)
     if (t === 'diameter' && (m = pos.match(/^(\d+)\.(\d+)\.(G[GNX])$/i))) {
       const code = m[3].toUpperCase(), fit = FIT[code], gang = +m[2];
       const out = { group: 'bcd', sub: 'bcd-' + fit, fit, gang, label: `BCD ${FIT_LABEL[fit]} · Gang ${gang}` };
@@ -435,31 +545,120 @@ globalThis.SubCore = (function () {
                : { group: 'cyl', sub: 'cyl', gang: null, label: 'Zylindrizität · Gewinde gesamt' };
     }
     if (t.includes('hardness')) return { group: 'heat', sub: 'heat', label: t.includes('depth') ? 'Einsatzhärtetiefe' : 'Oberflächenhärte' };
-    if (TEXT_DE[t]) return { group: 'shaft', sub: 'shaft', label: `${TEXT_DE[t]} ${pos}`, unclearLead: t === 'length' };
+    if (TEXT_DE[t] && ['diameter', 'roundness', 'concentricity', 'runout', 'total runout', 'length'].includes(t)) {
+      return { group: 'shaft', sub: 'shaft', label: `${TEXT_DE[t]} ${pos}`, unclearLead: t === 'length' };
+    }
     return { group: 'other', sub: 'other', label: `${c.charText || 'Merkmal'} ${pos}` };
+  }
+
+  /**
+   * Mutter: Gangzahl je Steigungsfenster aus dem Nennmaß ableiten (kleinstes Fenster = 1 Gang)
+   * und daraus die Lage der Kugelrillen KR1…KRn in Gängen bestimmen (KR1 = Gang 1).
+   */
+  function deriveNutGeometry(ds, issues) {
+    const leads = ds.chars.filter((c) => c.cls.group === 'lead' && c.cls.fromKr != null && c.nominal > 0);
+    const krs = new Set();
+    for (const c of ds.chars) if (c.cls.kr != null && c.cls.group === 'bcd') krs.add(c.cls.kr);
+    for (const c of leads) { krs.add(c.cls.fromKr); krs.add(c.cls.toKr); }
+    const pitch0 = leads.length ? Math.min(...leads.map((c) => c.nominal)) : null;
+    for (const c of leads) {
+      c.cls.turns = Math.max(1, Math.round(c.nominal / pitch0));
+      c.cls.turnsDerived = true;
+    }
+    const at = new Map();
+    const sorted = [...krs].sort((a, b) => a - b);
+    let ok = false;
+    if (leads.length && sorted.length) {
+      at.set(sorted[0], 1);
+      for (let pass = 0; pass < 10; pass++) {
+        let changed = false;
+        for (const c of leads) {
+          const a = c.cls.fromKr, b = c.cls.toKr, n = c.cls.turns;
+          if (at.has(a) && !at.has(b)) { at.set(b, at.get(a) + n); changed = true; }
+          else if (at.has(b) && !at.has(a)) { at.set(a, at.get(b) - n); changed = true; }
+        }
+        if (!changed) break;
+      }
+      ok = sorted.every((k) => at.has(k)) && leads.every((c) => at.get(c.cls.toKr) - at.get(c.cls.fromKr) === c.cls.turns);
+    }
+    if (!ok) {
+      at.clear();
+      for (const k of sorted) at.set(k, k);
+      if (leads.length) issues.add('info', 'kr-geometry', 'Lage der Kugelrillen (KR) in Gängen nicht eindeutig ableitbar – Diagramme zeigen KR1…KRn mit gleichem Abstand');
+    }
+    ds.krAt = at; // KR → Position (Gang)
+    ds.krGeometryDerived = ok;
+    for (const c of ds.chars) {
+      if (c.cls.kr != null && c.cls.group === 'bcd') c.cls.gang = at.get(c.cls.kr);
+      if (c.cls.group === 'lead' && c.cls.fromKr != null) { c.cls.from = at.get(c.cls.fromKr); c.cls.to = at.get(c.cls.toKr); }
+    }
   }
 
   const inc = (map, k) => map.set(k, (map.get(k) || 0) + 1);
   const mode = (map) => { let best, bn = -1; for (const [k, n] of map) if (n > bn) { best = k; bn = n; } return best; };
   const mean = (a) => (a.length ? a.reduce((s, v) => s + v, 0) / a.length : null);
   const fmtDay = (ms) => { const d = new Date(ms); return `${String(d.getUTCDate()).padStart(2, '0')}.${String(d.getUTCMonth() + 1).padStart(2, '0')}.${d.getUTCFullYear()}`; };
+  const tsOf = (r) => r.tsUTC ?? r.tsLocal ?? Infinity;
+  /** Nur echte Teile-IDs (32 Hex-Zeichen bzw. GUID) – nicht z. B. „90010008_1“ der Härteproben. */
+  const isPartId = (u) => /^[0-9a-f]{32}$/i.test(u) || /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(u);
 
-  /** Dateien zusammenführen, Dubletten entfernen, nach Material/Prozess trennen, Merkmale und Aufträge katalogisieren. */
-  function buildModel(files) {
+  /**
+   * Dateien zusammenführen, Dubletten entfernen, nach Material/Prozess trennen, Merkmale und Aufträge katalogisieren.
+   * Dubletten: (a) gleiche Teile-UUID + Merkmal mit identischem Wert (Re-Import) – der zuerst gemessene Eintrag zählt;
+   * (b) ohne UUID: gleicher Wert, gleiches Merkmal, gleiche Stichprobe, gleicher Zeitpunkt (überlappende Exporte).
+   */
+  function buildModel(files, expectedType) {
     const issues = new Issues();
-    const seen = new Set();
-    const records = [];
-    let dup = 0;
+    const all = [];
     for (const f of files) {
       if (f.fatal) issues.add('error', 'fatal', f.fatal, f.fileName);
-      for (const r of f.records || []) {
+      for (const r of f.records || []) all.push(r);
+    }
+    const idx = all.map((r, i) => i).sort((a, b) => tsOf(all[a]) - tsOf(all[b]) || a - b);
+    const seenGeneric = new Set(), seenUuid = new Map();
+    const records = [];
+    let dupGeneric = 0, conflict = 0;
+    const dupMeas = new Map(), crossOrder = new Map();
+    for (const i of idx) {
+      const r = all[i];
+      if (isPartId(r.uuid)) {
+        const k = r.uuid + '\u0001' + r.position;
+        const prev = seenUuid.get(k);
+        if (prev) {
+          if (Math.abs(prev.value - r.value) < 1e-12) {
+            const mk = `${r.order}|${r.sampleNo}|${r.uuid}`;
+            if (!dupMeas.has(mk)) dupMeas.set(mk, { order: r.order, sampleNo: r.sampleNo, keptOrder: prev.order, keptSample: prev.sampleNo, uuid: r.uuid });
+            if (prev.order !== r.order) crossOrder.set(r.uuid, { kept: prev.order, dropped: r.order });
+            continue;
+          }
+          conflict++;
+          issues.add('warn', 'uuid-conflict', 'Gleiche Teile-UUID mit abweichendem Wert – beide Werte werden ausgewertet (Nachmessung?)', `${r.uuid.slice(0, 8)}… · ${r.position}: ${prev.value} / ${r.value}`);
+        } else seenUuid.set(k, r);
+      } else {
         const key = [r.order, r.position, r.sampleNo, r.sample, r.sampleData, r.measNo, r.measNoSample, r.tsUTC ?? r.tsLocal, r.value].join('|');
-        if (seen.has(key)) { dup++; continue; }
-        seen.add(key);
-        records.push(r);
+        if (seenGeneric.has(key)) { dupGeneric++; continue; }
+        seenGeneric.add(key);
+      }
+      records.push(r);
+    }
+    if (dupGeneric) issues.add('info', 'dup', 'Doppelte Messwerte entfernt (gleicher Wert, gleiches Merkmal, gleicher Zeitpunkt – z. B. überlappende Exporte)', null, dupGeneric);
+    if (dupMeas.size) {
+      const it = issues.add('warn', 'dup-uuid', 'Teile doppelt importiert (gleiche Teile-UUID, alle Werte identisch) – jedes Teil wird nur einmal gezählt, und zwar beim zuerst gemessenen Eintrag', null, dupMeas.size);
+      const byOrder = new Map();
+      for (const d of dupMeas.values()) { if (!byOrder.has(d.order)) byOrder.set(d.order, []); byOrder.get(d.order).push(d.sampleNo); }
+      for (const [o, s] of byOrder) {
+        const ex = `${o}: Stichprobe ${[...new Set(s)].sort((a, b) => a - b).join(', ')} verworfen`;
+        if (!it.examples.includes(ex)) { if (it.examples.length < 6) it.examples.push(ex); else it.more++; }
       }
     }
-    if (dup) issues.add('info', 'dup', 'Doppelte Messwerte entfernt (gleicher Wert, gleiches Merkmal, gleicher Zeitpunkt – z. B. überlappende Exporte)', null, dup);
+    if (crossOrder.size) {
+      const pairs = new Map();
+      for (const v of crossOrder.values()) { const k = `${v.kept} → ${v.dropped}`; pairs.set(k, (pairs.get(k) || 0) + 1); }
+      for (const [k, n] of pairs) {
+        const [kept, dropped] = k.split(' → ');
+        issues.add('warn', 'dup-cross-order', 'Dieselben Teile stehen in zwei Fertigungsaufträgen – gezählt im zuerst gemessenen Auftrag. Bitte prüfen, welcher Auftrag richtig ist.', `${n} Teil(e): gezählt in ${kept}, verworfen in ${dropped}`, n);
+      }
+    }
 
     const groups = new Map();
     for (const r of records) {
@@ -474,17 +673,24 @@ globalThis.SubCore = (function () {
     for (const ds of datasets) {
       ds.materialText = mode(ds.texts) || '';
       ds.issues = new Issues();
-      analyseDataset(ds, ds.issues);
+      analyseDataset(ds, ds.issues, expectedType);
     }
     return { records, datasets, issues };
   }
 
-  function analyseDataset(ds, issues) {
-    if (ds.materialText && !/spindel|spindle/i.test(ds.materialText)) {
-      issues.add('warn', 'not-spindle', 'Materialtext enthält nicht „Spindel“ – ist das wirklich der Spindel-Export?', `${ds.material}: ${ds.materialText}`);
+  const TYPE_LABEL = { spindel: 'Spindel', mutter: 'Mutter' };
+
+  function analyseDataset(ds, issues, expectedType) {
+    const det = detectPartType(ds.records);
+    ds.detectedType = det.type;
+    ds.partType = det.type || expectedType || 'spindel';
+    if (expectedType && det.type && det.type !== expectedType) {
+      issues.add('error', 'wrong-type', `Das ist vermutlich ein ${TYPE_LABEL[det.type]}-Export, geladen im Reiter ${TYPE_LABEL[expectedType]}.`, det.type === 'mutter' ? 'Merkmale mit Kugelrillen „KR1…KR4“' : 'Merkmale mit „Gang n“ / Steigungsfenster „G1-G7“');
+    } else if (!det.type) {
+      issues.add('warn', 'type-unknown', `Teiletyp nicht eindeutig erkennbar – ausgewertet als ${TYPE_LABEL[ds.partType]}.`);
     }
     const chars = new Map();
-    const versions = new Map();
+    const versions = new Map(), machines = new Map();
     let tMin = Infinity, tMax = -Infinity;
     for (const r of ds.records) {
       let c = chars.get(r.position);
@@ -499,10 +705,12 @@ globalThis.SubCore = (function () {
       c.orders.add(r.order);
       if (r.orderInIP != null && (c.orderInIP == null || r.orderInIP < c.orderInIP)) c.orderInIP = r.orderInIP;
       if (r.planVersion) inc(versions, r.planVersion);
+      if (r.machineNo || r.machine) inc(machines, [r.machineNo, r.machine].filter(Boolean).join(' · '));
       const t = r.tsLocal ?? r.tsUTC;
       if (t != null) { if (t < tMin) tMin = t; if (t > tMax) tMax = t; }
     }
     ds.period = tMin <= tMax ? [tMin, tMax] : null;
+    ds.machines = [...machines.keys()];
     if (versions.size > 1) issues.add('info', 'plan-versions', 'Daten aus mehreren Prüfplanversionen', [...versions.keys()].join(', '));
 
     for (const c of chars.values()) {
@@ -512,31 +720,46 @@ globalThis.SubCore = (function () {
         issues.add('warn', 'tol-var', 'Nennmaß/Toleranz ändert sich innerhalb der Daten. „Außerhalb Toleranz“ wird je Messwert mit dessen eigener Toleranz bewertet; angezeigt wird die häufigste.', `${c.position} (${c.tolVariants.size} Varianten)`);
       }
       if (c.texts.size > 1 || c.charNos.size > 1) issues.add('warn', 'pos-ambig', 'Position gehört zu mehreren Merkmalen', `${c.position}: ${[...c.texts.keys()].join(' / ')}`);
-      c.cls = classify(c);
+      c.cls = classify(c, ds.partType);
       if (c.cls.note) issues.add('info', 'remark-mismatch', 'Prüfplantext passt nicht zur Position – zugeordnet wird über die Position', c.cls.note);
       if (c.cls.unclearLead) issues.add('warn', 'lead-unknown', 'Längenmerkmal ohne erkennbares Steigungsfenster („G1-G7“) im Prüfplantext – als Einzelmerkmal geführt', `${c.position}: „${c.remark}“`);
+      if (c.cls.copyOf) issues.add('info', 'bcd-copy', 'Merkmal ist eine Kopie eines anderen BCD-Merkmals mit eigener Toleranz – nicht doppelt im BCD-Profil gezählt', `${c.position} = ${c.cls.copyOf}`);
     }
     const gi = Object.fromEntries(GROUPS.map((g, i) => [g.id, i]));
     ds.chars = [...chars.values()].sort((a, b) => (a.orderInIP ?? 1e9) - (b.orderInIP ?? 1e9) || a.position.localeCompare(b.position));
-    ds.charsGrouped = [...ds.chars].sort((a, b) => gi[a.cls.sub] - gi[b.cls.sub] || (a.cls.gang ?? a.cls.from ?? 1e9) - (b.cls.gang ?? b.cls.from ?? 1e9) || (a.orderInIP ?? 1e9) - (b.orderInIP ?? 1e9));
     ds.charMap = chars;
+    if (ds.partType === 'mutter') deriveNutGeometry(ds, issues);
+    const key = (c) => (c.cls.overall ? -1 : c.cls.gang ?? c.cls.from ?? c.cls.kr ?? 1e9);
+    ds.charsGrouped = [...ds.chars].sort((a, b) => gi[a.cls.sub] - gi[b.cls.sub] || key(a) - key(b) || (b.cls.turns ?? 0) - (a.cls.turns ?? 0) || (a.orderInIP ?? 1e9) - (b.orderInIP ?? 1e9));
+    const outBy = new Map();
+    for (const r of ds.records) if ((r.lsl != null && r.value < r.lsl - EPS) || (r.usl != null && r.value > r.usl + EPS)) inc(outBy, r.position);
+    const sysOut = [];
+    for (const c of ds.chars) {
+      c.nOut = outBy.get(c.position) || 0;
+      if (c.n >= 5 && c.nOut === c.n) sysOut.push(c.position);
+    }
+    if (sysOut.length) issues.add('warn', 'sys-out', 'Merkmale, bei denen alle Werte außerhalb der Toleranz liegen – Messprogramm oder Toleranz prüfen', sysOut.slice(0, 12).join(', ') + (sysOut.length > 12 ? ` … (${sysOut.length})` : ''), sysOut.length);
 
     const batches = new Map();
     const batchToOrders = new Map();
     for (const r of ds.records) {
       let b = batches.get(r.order);
-      if (!b) batches.set(r.order, (b = { order: r.order, batchNos: new Map(), first: Infinity, last: -Infinity, n: 0 }));
+      if (!b) batches.set(r.order, (b = { order: r.order, batchNos: new Map(), machines: new Map(), parts: new Set(), first: Infinity, last: -Infinity, n: 0 }));
       b.n++;
       if (r.batch) {
         inc(b.batchNos, r.batch);
         if (!batchToOrders.has(r.batch)) batchToOrders.set(r.batch, new Set());
         batchToOrders.get(r.batch).add(r.order);
       }
+      if (r.machineNo || r.machine) inc(b.machines, r.machineNo || r.machine);
+      if (isPartId(r.uuid)) b.parts.add(r.uuid);
       const t = r.tsLocal ?? r.tsUTC;
       if (t != null) { if (t < b.first) b.first = t; if (t > b.last) b.last = t; }
     }
     for (const b of batches.values()) {
       b.batchNo = [...b.batchNos.keys()].join(', ');
+      b.machine = [...b.machines.keys()].join(', ');
+      b.nParts = b.parts.size || null;
       if (b.batchNos.size > 1) issues.add('warn', 'order-multi-batch', 'Fertigungsauftrag mit mehreren Chargennummern', `${b.order}: ${b.batchNo}`);
       if (!isFinite(b.first)) { b.first = null; b.last = null; }
       b.missing = ds.chars.filter((c) => c.cls.group !== 'heat' && !c.orders.has(b.order)).map((c) => c.position);
@@ -544,6 +767,8 @@ globalThis.SubCore = (function () {
     }
     for (const [bn, os] of batchToOrders) if (os.size > 1) issues.add('warn', 'batch-multi-order', 'Chargennummer in mehreren Fertigungsaufträgen', `${bn}: ${[...os].join(', ')}`);
     ds.batches = [...batches.values()].sort((a, b) => (a.first ?? 0) - (b.first ?? 0) || a.order.localeCompare(b.order));
+    const few = ds.batches.filter((b) => b.nParts != null && b.nParts < 3);
+    if (few.length) issues.add('warn', 'few-parts', 'Fertigungsauftrag mit weniger als 3 Teilen – Kennwerte wenig belastbar', few.map((b) => `${b.order}: ${b.nParts} Teil(e)`).join(' · '));
     ds.periodLabel = ds.period ? `${fmtDay(ds.period[0])} – ${fmtDay(ds.period[1])}` : '–';
   }
 
@@ -569,54 +794,65 @@ globalThis.SubCore = (function () {
     return { n, mean: mu, sd: n > 1 ? Math.sqrt(ss / (n - 1)) : null, min, max, range: max - min, below, above, values };
   }
 
-  /** Spindel-Kennwerte aus den Merkmalsstatistiken einer Einheit (Batch oder gepoolt). */
+  /** Kennwerte (Spindel oder Mutter) aus den Merkmalsstatistiken einer Einheit (Auftrag oder gepoolt). */
   function summarize(ds, chars) {
     const gangs = new Map();
+    const overall = {};
     const gaussVals = [];
     let nominal = null;
     for (const c of ds.chars) {
       if (c.cls.group !== 'bcd') continue;
       const st = chars.get(c.position);
-      if (!st) continue;
+      if (c.cls.overall) { if (st) overall[c.cls.fit] = { char: c, stats: st }; continue; }
+      if (!st || c.cls.gang == null) continue;
       let g = gangs.get(c.cls.gang);
-      if (!g) gangs.set(c.cls.gang, (g = { gang: c.cls.gang }));
+      if (!g) gangs.set(c.cls.gang, (g = { gang: c.cls.gang, kr: c.cls.kr ?? null }));
       g[c.cls.fit] = { char: c, stats: st };
       if (c.cls.fit === 'gauss') { for (const v of st.values) gaussVals.push(v); if (nominal == null) nominal = c.nominal; }
     }
+    if (overall.gauss) nominal = overall.gauss.char.nominal;
     const profile = [...gangs.values()].sort((a, b) => a.gang - b.gang);
     const gMeans = profile.filter((g) => g.gauss).map((g) => g.gauss.stats.mean);
     const form = profile.filter((g) => g.huell && g.pferch).map((g) => g.huell.stats.mean - g.pferch.stats.mean);
     const windows = ds.chars
-      .filter((c) => c.cls.group === 'lead' && chars.get(c.position))
+      .filter((c) => c.cls.group === 'lead' && chars.get(c.position) && c.cls.turns)
       .map((c) => {
         const st = chars.get(c.position);
         return { char: c, stats: st, from: c.cls.from, to: c.cls.to, turns: c.cls.turns, pitch: st.mean / c.cls.turns, nominalPitch: c.nominal != null ? c.nominal / c.cls.turns : null };
       })
-      .sort((a, b) => a.from - b.from);
-    const wMeans = windows.map((w) => w.stats.mean);
-    let oot = 0, nPerChar = 0;
-    const ootChars = [];
+      .sort((a, b) => a.from - b.from || b.turns - a.turns);
+    const maxTurns = windows.length ? Math.max(...windows.map((w) => w.turns)) : 0;
+    const main = windows.filter((w) => w.turns === maxTurns);
+    const mainMeans = main.map((w) => w.stats.mean);
+    let oot = 0, ootThread = 0, nPerChar = 0;
+    const ootChars = [], ootThreadChars = [];
     for (const c of ds.chars) {
       const st = chars.get(c.position);
       if (!st) continue;
-      if (st.below + st.above) { oot += st.below + st.above; ootChars.push(c.position); }
+      const o = st.below + st.above;
+      if (o) {
+        oot += o; ootChars.push(c.position);
+        if (THREAD_GROUPS.has(c.cls.group)) { ootThread += o; ootThreadChars.push(c.position); }
+      }
       if (c.cls.group !== 'heat') nPerChar = Math.max(nPerChar, st.n);
     }
     const sh = ds.chars.find((c) => c.cls.group === 'heat' && c.cls.label === 'Oberflächenhärte');
     return {
       bcd: {
-        profile, nominal,
-        gaussMean: mean(gaussVals), gaussN: gaussVals.length,
+        profile, overall, nominal,
+        gaussMean: overall.gauss ? overall.gauss.stats.mean : mean(gaussVals),
+        gaussN: overall.gauss ? overall.gauss.stats.n : gaussVals.length,
         profileRange: gMeans.length > 1 ? Math.max(...gMeans) - Math.min(...gMeans) : null,
         formMean: form.length ? mean(form) : null, formN: form.length,
+        formOverall: overall.huell && overall.pferch ? overall.huell.stats.mean - overall.pferch.stats.mean : null,
       },
       lead: {
-        windows,
-        pitchMean: windows.length ? mean(windows.map((w) => w.pitch)) : null,
-        nominalPitch: windows.length ? windows[0].nominalPitch : null,
-        spread: wMeans.length > 1 ? Math.max(...wMeans) - Math.min(...wMeans) : null,
+        windows, mainTurns: maxTurns, mainCount: main.length,
+        pitchMean: main.length ? mean(main.map((w) => w.pitch)) : null,
+        nominalPitch: main.length ? main[0].nominalPitch : null,
+        spread: mainMeans.length > 1 ? Math.max(...mainMeans) - Math.min(...mainMeans) : null,
       },
-      oot, ootChars, nPerChar,
+      oot, ootChars, ootThread, ootThreadChars, nPerChar,
       hardness: sh ? chars.get(sh.position) || null : null,
       hardnessUnit: sh ? sh.unit : null,
     };
@@ -658,18 +894,26 @@ globalThis.SubCore = (function () {
   function exportCSV(ds, res) {
     const dec = (v) => (v == null || !isFinite(v) ? '' : String(+v.toPrecision(12)).replace('.', ','));
     const txt = (s) => { s = s == null ? '' : String(s); return /[;"\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
-    const head = ['Material', 'Prozess', 'Einheit', 'Fertigungsauftrag', 'Charge', 'einbezogen', 'Position', 'Merkmal', 'Gruppe', 'Gang', 'Masseinheit', 'Nennmass', 'UGW', 'OGW', 'n', 'Mittelwert', 's', 'Min', 'Max', 'n_unter_UGW', 'n_ueber_OGW'];
+    const head = ['Teil', 'Material', 'Prozess', 'Einheit', 'Fertigungsauftrag', 'Charge', 'einbezogen', 'Position', 'Merkmal', 'Gruppe', 'Lage', 'Masseinheit', 'Nennmass', 'UGW', 'OGW', 'n', 'Mittelwert', 's', 'Min', 'Max', 'n_unter_UGW', 'n_ueber_OGW'];
     const out = [head.join(';')];
     const gl = Object.fromEntries(GROUPS.map((g) => [g.id, g.label]));
     const units = [res.pooled, ...res.order.map((o) => res.units.get(o))];
+    const lage = (c) => {
+      if (c.cls.kr != null) return `KR${c.cls.kr}`;
+      if (c.cls.fromKr != null) return `KR${c.cls.fromKr}-KR${c.cls.toKr}`;
+      if (c.cls.overall) return 'gesamt';
+      if (c.cls.gang != null) return String(c.cls.gang);
+      if (c.cls.from != null) return `${c.cls.from}-${c.cls.to}`;
+      return '';
+    };
     for (const u of units) {
       for (const c of ds.charsGrouped) {
         const st = u.chars.get(c.position);
         if (!st) continue;
         out.push([
-          txt(ds.material), txt(ds.process), u.pooled ? `gepoolt (${res.nIncluded} Aufträge)` : 'Batch',
+          TYPE_LABEL[ds.partType] || '', txt(ds.material), txt(ds.process), u.pooled ? `gepoolt (${res.nIncluded} Aufträge)` : 'Batch',
           txt(u.pooled ? '' : u.id), txt(u.pooled ? '' : u.batch.batchNo), u.included ? 'ja' : 'nein',
-          txt(c.position), txt(c.cls.label), txt(gl[c.cls.sub]), c.cls.gang ?? (c.cls.from != null ? `${c.cls.from}-${c.cls.to}` : ''),
+          txt(c.position), txt(c.cls.label), txt(gl[c.cls.sub]), txt(lage(c)),
           txt(c.unit), dec(c.nominal), dec(c.lsl), dec(c.usl), st.n, dec(st.mean), dec(st.sd), dec(st.min), dec(st.max), st.below, st.above,
         ].join(';'));
       }
@@ -678,9 +922,9 @@ globalThis.SubCore = (function () {
   }
 
   return {
-    decodeBytes, detectDelimiter, parseCSV, decodeR, parseNum, decimalsOf, parseTs,
-    Issues, parseCAQ, classify, buildModel, describe, summarize, characterize, exportCSV,
-    GROUPS, FIT_LABEL, fmtDay,
+    decodeBytes, detectDelimiter, parseCSV, decodeR, fixMojibake, parseNum, decimalsOf, parseTs,
+    Issues, parseCAQ, detectPartType, classify, buildModel, describe, summarize, characterize, exportCSV,
+    GROUPS, THREAD_GROUPS, FIT_LABEL, TYPE_LABEL, fmtDay,
   };
 })();
 </script>
@@ -693,18 +937,33 @@ globalThis.SubCore = (function () {
   'use strict';
   const C = globalThis.SubCore;
   const $ = (id) => document.getElementById(id);
-  const LS_KEY = 'subtracteract.spindel.excluded.v1';
   const SVGNS = 'http://www.w3.org/2000/svg';
   const FITS = ['gauss', 'huell', 'pferch'];
-
-  const state = {
-    files: [], model: null, dsId: null, ds: null, res: null,
-    excluded: loadExcluded(), sel: 'ALL', cmp: null, mapOpen: false,
-    show: { gauss: true, huell: true, pferch: true, ctx: true },
+  const PART = {
+    spindel: { label: 'Spindel', gen: 'der Spindel' },
+    mutter: { label: 'Mutter', gen: 'der Mutter' },
   };
+  const lsKey = (part) => `subtracteract.${part}.excluded.v1`;
 
-  function loadExcluded() { try { return new Set(JSON.parse(localStorage.getItem(LS_KEY) || '[]')); } catch (e) { return new Set(); } }
-  function saveExcluded() { try { localStorage.setItem(LS_KEY, JSON.stringify([...state.excluded])); } catch (e) { /* ohne Speicher weiter */ } }
+  function makeState(part) {
+    return {
+      part, files: [], model: null, dsId: null, ds: null, res: null, notice: null,
+      excluded: loadExcluded(part), sel: 'ALL', cmp: null, mapOpen: false, filter: '', onlyOut: false,
+      show: { gauss: true, huell: true, pferch: true, ctx: true },
+    };
+  }
+  function loadExcluded(part) { try { return new Set(JSON.parse(localStorage.getItem(lsKey(part)) || '[]')); } catch (e) { return new Set(); } }
+  function saveExcluded() { try { localStorage.setItem(lsKey(state.part), JSON.stringify([...state.excluded])); } catch (e) { /* ohne Speicher weiter */ } }
+  const states = { spindel: makeState('spindel'), mutter: makeState('mutter') };
+  let state = states.spindel;
+  const isNut = () => state.ds && state.ds.partType === 'mutter';
+  /** Beschriftung einer Position auf der Gewindeachse: Spindel = Gang, Mutter = Kugelrille. */
+  function posLabel(x, long) {
+    if (isNut() && state.ds.krAt) {
+      for (const [kr, g] of state.ds.krAt) if (g === x) return long && state.ds.krGeometryDerived ? `KR${kr} · Gang ${g}` : `KR${kr}`;
+    }
+    return long ? `Gang ${x}` : String(x);
+  }
 
   // ------------------------------------------------------------ Helfer
   function h(tag, attrs, ...children) {
@@ -738,6 +997,9 @@ globalThis.SubCore = (function () {
     return (v > 0 ? '+' : '−') + nf(d).format(Math.abs(v));
   }
   const um = (mm) => (mm == null ? null : mm * 1000);
+  /** Anzeigegenauigkeit: Messauflösung, bei mm höchstens 4 Stellen (0,1 µm), sonst höchstens 3. */
+  const dp = (c) => Math.min(c.decimals, c.unit === 'mm' ? 4 : 3);
+  const plGang = (n) => `${n} ${n === 1 ? 'Gang' : 'Gänge'}`;
   const fmtDay = (ms) => (ms == null ? '–' : C.fmtDay(ms));
   const tolText = (c, d) => (c.lsl != null && c.usl != null ? `${fmt(c.lsl, d)} … ${fmt(c.usl, d)}` : c.usl != null ? `≤ ${fmt(c.usl, d)}` : c.lsl != null ? `≥ ${fmt(c.lsl, d)}` : 'ohne Toleranz');
   const selUnit = () => (state.sel === 'ALL' ? state.res.pooled : state.res.units.get(state.sel));
@@ -753,6 +1015,7 @@ globalThis.SubCore = (function () {
   window.addEventListener('drop', (e) => { e.preventDefault(); drop.classList.remove('over'); if (e.dataTransfer && e.dataTransfer.files.length) addFiles(e.dataTransfer.files); });
 
   async function addFiles(fileList) {
+    const parsedList = [];
     for (const f of [...fileList]) {
       let parsed;
       try {
@@ -763,15 +1026,55 @@ globalThis.SubCore = (function () {
         parsed = { fileName: f.name, fatal: 'Datei konnte nicht gelesen werden: ' + err.message, records: [], issues: new C.Issues(), rowCount: 0 };
       }
       parsed.size = f.size;
-      state.files = state.files.filter((x) => x.fileName !== f.name); // gleicher Name = neuere Fassung
-      state.files.push(parsed);
+      parsedList.push(parsed);
     }
-    rebuild();
+    addParsed(parsedList);
   }
-  function reset() { state.files = []; state.sel = 'ALL'; rebuild(); }
+  /** Dateien dem passenden Reiter zuordnen (Spindel/Mutter automatisch erkannt). */
+  function addParsed(parsedList) {
+    const touched = new Set(), moved = [];
+    for (const p of parsedList) {
+      const target = p.partType || state.part;
+      const st = states[target];
+      for (const s2 of Object.values(states)) if (s2 !== st && s2.files.some((x) => x.fileName === p.fileName)) { s2.files = s2.files.filter((x) => x.fileName !== p.fileName); touched.add(s2.part); }
+      st.files = st.files.filter((x) => x.fileName !== p.fileName); // gleicher Name = neuere Fassung
+      st.files.push(p);
+      touched.add(target);
+      if (target !== state.part) moved.push({ name: p.fileName, target });
+    }
+    const current = state.part;
+    for (const part of touched) {
+      const st = states[part];
+      const arrived = moved.filter((m) => m.target === part);
+      st.notice = arrived.length ? `${arrived.map((m) => m.name).join(', ')} wurde als ${PART[part].label}-Export erkannt und hier abgelegt.` : null;
+      state = st;
+      rebuild();
+    }
+    state = states[current];
+    const onlyOther = parsedList.length && moved.length === parsedList.length;
+    switchPart(onlyOther ? moved[0].target : current);
+  }
+  function reset() { state.files = []; state.sel = 'ALL'; state.notice = null; rebuild(); renderSteps(); }
+
+  function switchPart(part) {
+    state = states[part];
+    hideTip();
+    renderSteps();
+    renderFileBar(); renderReport(); renderAnalysis();
+  }
+  function renderSteps() {
+    for (const b of document.querySelectorAll('#steps button.step')) {
+      const part = b.dataset.part, st = states[part], on = part === state.part;
+      b.classList.toggle('on', on);
+      if (on) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current');
+      const n = st.files.length;
+      b.replaceChildren(`${part === 'spindel' ? 1 : 2} · ${PART[part].label}`, n ? h('span', { class: 'cnt', title: `${n} Datei(en) geladen`, text: String(n) }) : '');
+    }
+  }
+  document.querySelectorAll('#steps button.step').forEach((b) => b.addEventListener('click', () => switchPart(b.dataset.part)));
 
   function rebuild() {
-    state.model = state.files.length ? C.buildModel(state.files) : null;
+    state.model = state.files.length ? C.buildModel(state.files, state.part) : null;
     const dss = state.model ? state.model.datasets : [];
     if (!dss.some((d) => d.id === state.dsId)) state.dsId = dss.length ? dss[0].id : null;
     recompute(true);
@@ -790,19 +1093,22 @@ globalThis.SubCore = (function () {
     }
     if (withReport) { renderFileBar(); renderReport(); }
     renderAnalysis();
+    renderSteps();
   }
 
   // ------------------------------------------------------------ Dateileiste
   function renderFileBar() {
     const bar = $('fileBar');
     drop.classList.toggle('compact', state.files.length > 0);
-    drop.querySelector('strong').textContent = state.files.length ? 'Weitere Datei hinzufügen' : 'CAQ-Export der Spindel hierher ziehen';
+    drop.querySelector('strong').textContent = state.files.length ? 'Weitere Datei hinzufügen' : `CAQ-Export ${PART[state.part].gen} hierher ziehen`;
+    drop.setAttribute('aria-label', `CAQ-Export ${PART[state.part].gen} auswählen`);
     if (!state.files.length) { bar.hidden = true; return; }
     bar.hidden = false;
-    bar.replaceChildren(
-      h('div', { class: 'names' }, 'Geladen:', state.files.map((f) => h('span', { class: 'chip', title: f.fatal || '', text: f.fileName }))),
+    bar.replaceChildren(...[
+      h('div', { class: 'names' }, `Geladen (${PART[state.part].label}):`, state.files.map((f) => h('span', { class: 'chip', title: f.fatal || '', text: f.fileName }))),
       h('button', { class: 'btn', type: 'button', onclick: reset, text: 'Zurücksetzen' }),
-    );
+      state.notice ? h('div', { class: 'notice', style: 'flex-basis:100%', text: state.notice }) : null,
+    ].filter(Boolean));
   }
 
   // ------------------------------------------------------------ Einlesebericht
@@ -833,9 +1139,10 @@ globalThis.SubCore = (function () {
       for (const c of ds.chars) groups[c.cls.sub] = (groups[c.cls.sub] || 0) + 1;
       const nBcd = (groups['bcd-gauss'] || 0) + (groups['bcd-huell'] || 0) + (groups['bcd-pferch'] || 0);
       parts.push(h('div', { class: 'tiles' },
-        tile('Material', ds.material || '–', ds.materialText),
+        tile('Teil', PART[ds.partType].label, ds.detectedType ? (ds.partType === 'mutter' ? 'erkannt an Kugelrillen KR1…KRn' : 'erkannt an Gang-Nummern / Fenstern G1-G7') : 'nicht eindeutig erkannt', ds.detectedType && ds.detectedType !== state.part),
+        tile('Material', ds.material || '–', ds.materialText && ds.materialText !== ds.material ? ds.materialText : null),
         tile('Prozess', ds.process || '–', ds.periodLabel),
-        tile('Fertigungsaufträge', String(ds.batches.length), `${new Set(ds.batches.map((b) => b.batchNo)).size} Chargen`),
+        tile('Fertigungsaufträge', String(ds.batches.length), `${new Set(ds.batches.map((b) => b.batchNo)).size} Chargen${ds.machines.length > 1 ? ` · ${ds.machines.length} Maschinen` : ''}`),
         tile('Merkmale', String(ds.chars.length), `${groups.lead || 0} Steigung · ${nBcd} BCD · ${groups.cyl || 0} Zyl.`),
         tile('Messwerte', nf(0).format(ds.records.length), `aus ${state.files.filter((f) => !f.fatal).length} Datei(en)`),
       ));
@@ -882,13 +1189,15 @@ globalThis.SubCore = (function () {
             h('td', { class: 'wrap', text: c.remark || '–' }),
             h('td', null, c.cls.label, c.cls.note ? h('span', { class: 'muted', title: 'Prüfplantext widerspricht der Position', text: ' ⓘ Text abweichend' }) : null),
             h('td', { text: c.unit }),
-            h('td', { class: 'num', text: fmt(c.nominal, c.decimals) }),
-            h('td', { class: 'num', text: fmt(c.lsl, c.decimals) }),
-            h('td', { class: 'num', text: fmt(c.usl, c.decimals) }),
+            h('td', { class: 'num', text: fmt(c.nominal, dp(c)) }),
+            h('td', { class: 'num', text: fmt(c.lsl, dp(c)) }),
+            h('td', { class: 'num', text: fmt(c.usl, dp(c)) }),
             h('td', { class: 'num', text: nf(0).format(c.n) }),
             h('td', { class: 'num', text: String(c.orders.size) }),
           ))))),
-        h('p', { class: 'note', text: 'Regeln: BCD = „diameter“ mit Position NNN.GG.Gx (GG = Gauss, GN = Hüll, GX = Pferch, mittlere Zahl = Gang). Steigung = „length“ mit Fenster „G1-G7“ im Prüfplantext. Zylindrizität mit Positionsendung = je Gang, sonst gesamt. Der Prüfplantext wird sonst nur gegengeprüft.' }));
+        h('p', { class: 'note', text: ds.partType === 'mutter'
+          ? `Regeln (Mutter): BCD = „diameter“ mit „BCD“ im Prüfplantext und Position NNN[.k].Gx (GG = Gauss, GN = Hüll, GX = Pferch; k = Kugelrille KRk, ohne k = Zylinder gesamt). „BCD Range“ und „wie …“ sind Kennzahlen bzw. Kopien und zählen nicht zum Profil. Steigung = „distance/length“ mit „Steigung (KRa-KRb)“; die Gangzahl je Fenster wird aus dem Nennmaß abgeleitet (kleinstes Fenster = 1 Gang)${ds.krGeometryDerived ? ` – daraus liegt ${[...ds.krAt].sort((a, b) => a[0] - b[0]).map(([k, g]) => `KR${k} bei Gang ${g}`).join(', ')}` : ''}. Alle übrigen Merkmale werden nach Merkmalsart gruppiert.`
+          : 'Regeln (Spindel): BCD = „diameter“ mit Position NNN.GG.Gx (GG = Gauss, GN = Hüll, GX = Pferch, mittlere Zahl = Gang). Steigung = „length“ mit Fenster „G1-G7“ im Prüfplantext. Zylindrizität mit Positionsendung = je Gang, sonst gesamt. Der Prüfplantext wird sonst nur gegengeprüft.' }));
       det.open = state.mapOpen;
       parts.push(h('div', { style: 'margin-top:16px' }, det));
     }
@@ -912,6 +1221,8 @@ globalThis.SubCore = (function () {
     const sec = $('batchSec'), ds = state.ds, res = state.res;
     const bcdNom = (res.pooled.summary.bcd.nominal ?? ds.chars.find((c) => c.cls.group === 'bcd')?.nominal) ?? null;
     const shUnit = res.pooled.summary.hardnessUnit || '';
+    const hasHeat = ds.chars.some((c) => c.cls.group === 'heat');
+    const multiMachine = ds.machines.length > 1;
     const row = (u) => {
       const sm = u.summary, isAll = !!u.pooled;
       const tr = h('tr', {
@@ -930,13 +1241,14 @@ globalThis.SubCore = (function () {
         h('td', null, cb),
         h('td', { class: 'ord' }, isAll ? h('strong', { text: 'Alle einbezogenen (gepoolt)' }) : u.id),
         h('td', { text: isAll ? `${res.nIncluded} von ${ds.batches.length}` : u.batch.batchNo || '–' }),
+        multiMachine ? h('td', { text: isAll ? `${ds.machines.length} Maschinen` : u.batch.machine || '–' }) : null,
         h('td', { text: isAll ? ds.periodLabel : fmtDay(u.batch.first) }),
         h('td', { class: 'num', text: sm.nPerChar ? String(sm.nPerChar) : '–' }),
         h('td', { class: 'num', text: fmt(g, 4) }),
         h('td', { class: 'num', text: g != null && bcdNom != null ? fmtS(um(g - bcdNom), 1) : '–' }),
         h('td', { class: 'num', text: fmt(sm.lead.pitchMean, 5) }),
-        h('td', { class: 'num' + (sm.oot ? ' oot' : ''), title: sm.ootChars.join(', '), text: sm.oot ? `⚠ ${sm.oot}` : '0' }),
-        h('td', { class: 'num', text: sm.hardness ? fmt(sm.hardness.mean, 0) : '–' }),
+        h('td', { class: 'num' + (sm.ootThread ? ' oot' : ''), title: `Gewinde: ${sm.ootThreadChars.join(', ') || '–'} · alle Merkmale: ${sm.oot} Werte`, text: sm.ootThread ? `⚠ ${sm.ootThread}` : '0' }),
+        hasHeat ? h('td', { class: 'num', text: sm.hardness ? fmt(sm.hardness.mean, 0) : '–' }) : null,
       );
       return tr;
     };
@@ -949,9 +1261,9 @@ globalThis.SubCore = (function () {
           ds.batches.some((b) => state.excluded.has(b.order)) ? h('button', { class: 'btn', type: 'button', onclick: () => { ds.batches.forEach((b) => state.excluded.delete(b.order)); saveExcluded(); recompute(false); }, text: 'Alle einbeziehen' }) : null)),
       h('div', { class: 'scroll' }, h('table', null,
         h('thead', null, h('tr', null,
-          h('th', { text: 'Einb.' }), h('th', { text: 'Fertigungsauftrag' }), h('th', { text: 'Charge' }), h('th', { text: 'Prüfdatum' }),
+          h('th', { text: 'Einb.' }), h('th', { text: 'Fertigungsauftrag' }), h('th', { text: 'Charge' }), multiMachine ? h('th', { text: 'Maschine' }) : null, h('th', { text: 'Prüfdatum' }),
           h('th', { class: 'num', text: 'n je Merkmal' }), h('th', { class: 'num', text: 'BCD Gauss x̄ [mm]' }), h('th', { class: 'num', text: 'Δ Nenn [µm]' }),
-          h('th', { class: 'num', text: 'Steigung p̄ [mm]' }), h('th', { class: 'num', text: 'Werte außerh. Tol.' }), h('th', { class: 'num', text: `Härte x̄ [${shUnit || '–'}]` }))),
+          h('th', { class: 'num', text: 'Steigung p̄ [mm]' }), h('th', { class: 'num', text: 'Gewinde außerh. Tol.' }), hasHeat ? h('th', { class: 'num', text: `Härte x̄ [${shUnit || '–'}]` }) : null)),
         h('tbody', null, row(res.pooled), units.map(row)))),
     );
   }
@@ -960,8 +1272,8 @@ globalThis.SubCore = (function () {
   function gangDomain() {
     const g = [];
     for (const c of state.ds.chars) {
-      if (c.cls.group === 'bcd') g.push(c.cls.gang);
-      if (c.cls.group === 'lead') g.push(c.cls.from, c.cls.to);
+      if (c.cls.group === 'bcd' && c.cls.gang != null) g.push(c.cls.gang);
+      if (c.cls.group === 'lead' && c.cls.from != null) g.push(c.cls.from, c.cls.to);
     }
     return g.length ? [Math.min(...g) - 0.6, Math.max(...g) + 0.6] : [0, 1];
   }
@@ -970,9 +1282,10 @@ globalThis.SubCore = (function () {
     const sec = $('profileSec'), ds = state.ds, u = selUnit();
     const sm = u.summary, b = sm.bcd, l = sm.lead;
     const hasBcd = ds.chars.some((c) => c.cls.group === 'bcd'), hasLead = ds.chars.some((c) => c.cls.group === 'lead');
-    const head = h('div', { class: 'sec-head' }, h('div', null, h('h2', { text: 'Spindel-Steckbrief' }), h('p', { class: 'sub', text: unitTitle(u) })));
+    const nut = ds.partType === 'mutter';
+    const head = h('div', { class: 'sec-head' }, h('div', null, h('h2', { text: `${PART[ds.partType].label}-Steckbrief` }), h('p', { class: 'sub', text: unitTitle(u) })));
     if (!hasBcd && !hasLead) {
-      sec.replaceChildren(head, h('p', { class: 'empty', text: 'In diesen Daten wurden keine BCD- oder Steigungsmerkmale erkannt. Ist das ein Spindel-Export? Siehe Merkmalszuordnung im Einlesebericht.' }));
+      sec.replaceChildren(head, h('p', { class: 'empty', text: `In diesen Daten wurden keine BCD- oder Steigungsmerkmale erkannt. Ist das ein ${PART[ds.partType].label}-Export? Siehe Merkmalszuordnung im Einlesebericht.` }));
       return;
     }
     if (u.pooled && !state.res.nIncluded) {
@@ -980,13 +1293,25 @@ globalThis.SubCore = (function () {
       return;
     }
     const nomP = l.nominalPitch;
+    const posWord = nut ? 'KR' : 'Gänge';
+    const singles = l.windows.filter((w) => w.turns === 1);
+    let leadTile;
+    if (l.spread != null) {
+      leadTile = tile('Steigung zwischen Fenstern', `${fmt(um(l.spread), 1)} µm`, `Spanne der ${l.mainCount} Fenstermittel (Länge über ${l.mainTurns} Gänge)`);
+    } else if (singles.length > 1) {
+      const ps = singles.map((w) => w.pitch);
+      leadTile = tile('Steigung der Einzelgänge', `${fmt(um(Math.max(...ps) - Math.min(...ps)), 1)} µm`, `Spanne ${singles.map((w) => w.char.cls.label.replace('Steigung ', '')).join(' vs. ')} (je 1 Gang)`);
+    } else {
+      leadTile = tile('Steigung zwischen Fenstern', '–', 'nur ein Steigungsfenster');
+    }
+    const ov = b.overall || {};
     const tiles = h('div', { class: 'tiles' },
-      tile('BCD Gauss x̄', b.gaussMean != null ? `${fmt(b.gaussMean, 4)} mm` : '–', b.gaussMean != null && b.nominal != null ? `${fmtS(um(b.gaussMean - b.nominal), 1)} µm zum Nennmaß · ${b.gaussN} Werte` : null),
-      tile('BCD-Verlauf über Gänge', b.profileRange != null ? `${fmt(um(b.profileRange), 1)} µm` : '–', 'Spanne der Gang-Mittelwerte (Gauss)'),
-      tile('Hüll − Pferch x̄', b.formMean != null ? `${fmt(um(b.formMean), 1)} µm` : '–', b.formN ? `Mittel über ${b.formN} Gänge` : null),
-      tile('Steigung p̄', l.pitchMean != null ? `${fmt(l.pitchMean, 5)} mm` : '–', l.pitchMean != null && nomP != null ? `${fmtS(um(l.pitchMean - nomP), 2)} µm je Gang · Nenn ${fmt(nomP, 3)}` : null),
-      tile('Steigung zwischen Fenstern', l.spread != null ? `${fmt(um(l.spread), 1)} µm` : '–', l.windows.length ? `Spanne der ${l.windows.length} Fenstermittel (Länge über ${l.windows[0].turns} Gänge)` : null),
-      tile('Werte außerhalb Toleranz', String(sm.oot), sm.oot ? `in ${sm.ootChars.length} Merkmal(en)` : 'alle Merkmale', sm.oot > 0),
+      tile('BCD Gauss x̄', b.gaussMean != null ? `${fmt(b.gaussMean, 4)} mm` : '–', b.gaussMean != null && b.nominal != null ? `${fmtS(um(b.gaussMean - b.nominal), 1)} µm zum Nennmaß ${fmt(b.nominal, 3)}${ov.gauss ? ` · Zylinder ${ov.gauss.char.position}` : ''} · ${b.gaussN} Werte` : null),
+      tile(`BCD-Verlauf über ${posWord}`, b.profileRange != null ? `${fmt(um(b.profileRange), 1)} µm` : '–', `Spanne der ${nut ? 'KR' : 'Gang'}-Mittelwerte (Gauss)`),
+      tile('Hüll − Pferch x̄', b.formMean != null ? `${fmt(um(b.formMean), 1)} µm` : '–', b.formN ? `Mittel über ${b.formN} ${posWord}${b.formOverall != null ? ` · Zylinder gesamt ${fmt(um(b.formOverall), 1)} µm` : ''}` : null),
+      tile('Steigung p̄', l.pitchMean != null ? `${fmt(l.pitchMean, 5)} mm` : '–', l.pitchMean != null && nomP != null ? `${fmtS(um(l.pitchMean - nomP), 2)} µm je Gang · Nenn ${fmt(nomP, 3)} · aus ${l.mainCount > 1 ? `${l.mainCount} Fenstern` : 'dem Fenster'} über ${l.mainTurns} Gänge` : null),
+      leadTile,
+      tile('Gewinde: Werte außerhalb Toleranz', String(sm.ootThread), `${sm.ootThread ? `in ${sm.ootThreadChars.length} Gewinde-Merkmal(en) · ` : ''}alle Merkmale: ${nf(0).format(sm.oot)}`, sm.ootThread > 0),
     );
 
     const bcdBox = h('div', { class: 'chartbox' });
@@ -999,27 +1324,30 @@ globalThis.SubCore = (function () {
     if (hasBcd) {
       const hasHP = ds.chars.some((c) => c.cls.fit === 'huell' || c.cls.fit === 'pferch');
       charts.append(h('div', null,
-        h('div', { class: 'chart-title' }, h('h3', { text: 'BCD über Gang' }), h('span', { class: 'muted', text: `Abweichung vom Nennmaß ${fmt(b.nominal ?? ds.chars.find((c) => c.cls.group === 'bcd').nominal, 3)} mm in µm` })),
+        h('div', { class: 'chart-title' }, h('h3', { text: nut ? 'BCD über die Kugelrillen (KR)' : 'BCD über Gang' }), h('span', { class: 'muted', text: `Abweichung von ${fmt(b.nominal ?? ds.chars.find((c) => c.cls.group === 'bcd').nominal, 3)} mm in µm${nut && ds.krGeometryDerived ? ' · KR an ihrer Lage in Gängen' : ''}` })),
         h('div', { class: 'legend' },
           legendBtn('gauss', glyph('gauss'), 'Gauss x̄ · Min–Max'),
           hasHP ? legendBtn('huell', glyph('huell'), 'Hüll x̄') : null,
           hasHP ? legendBtn('pferch', glyph('pferch'), 'Pferch x̄') : null,
           legendBtn('ctx', glyph('ctx'), u.pooled ? 'einzelne Aufträge (Gauss x̄)' : 'andere Aufträge (Gauss x̄)'),
           h('span', { class: 'lg static' }, glyph('band'), h('span', { class: 't', text: 'Toleranz Gauss' })),
-          hasHP ? h('span', { class: 'lg static' }, glyph('tol2'), h('span', { class: 't', text: 'Toleranz Hüll/Pferch' })) : null),
+          hasHP ? h('span', { class: 'lg static' }, glyph('tol2'), h('span', { class: 't', text: 'Toleranz Hüll/Pferch' })) : null,
+          b.overall && b.overall.gauss ? h('span', { class: 'lg static' }, glyph('overall'), h('span', { class: 't', text: 'Zylinder gesamt (Gauss x̄)' })) : null),
         bcdBox));
     }
     if (hasLead) {
-      const w0 = ds.chars.find((c) => c.cls.group === 'lead');
+      const leads = ds.chars.filter((c) => c.cls.group === 'lead');
+      const w0 = leads[0];
+      const sameTurns = leads.every((c) => c.cls.turns === w0.cls.turns && c.nominal === w0.nominal);
       charts.append(h('div', null,
-        h('div', { class: 'chart-title' }, h('h3', { text: 'Steigung über Gewindelänge' }), h('span', { class: 'muted', text: `Längenabweichung je Fenster über ${w0.cls.turns} Gänge vom Nennmaß ${fmt(w0.nominal, 3)} mm in µm` })),
+        h('div', { class: 'chart-title' }, h('h3', { text: 'Steigung über Gewindelänge' }), h('span', { class: 'muted', text: sameTurns ? `Längenabweichung je Fenster über ${plGang(w0.cls.turns)} vom Nennmaß ${fmt(w0.nominal, 3)} mm in µm` : `Längenabweichung je Fenster vom jeweiligen Nennmaß in µm (${leads.map((c) => `${c.cls.label.replace('Steigung ', '')}: ${plGang(c.cls.turns)}`).join(', ')})` })),
         h('div', { class: 'legend' },
           h('span', { class: 'lg static' }, glyph('gauss'), h('span', { class: 't', text: 'Fenster x̄ · Min–Max' })),
           state.show.ctx ? h('span', { class: 'lg static' }, glyph('ctx'), h('span', { class: 't', text: u.pooled ? 'einzelne Aufträge' : 'andere Aufträge' })) : null,
           h('span', { class: 'lg static' }, glyph('band'), h('span', { class: 't', text: 'Toleranz' }))),
         leadBox));
     }
-    sec.replaceChildren(head, tiles, charts, h('p', { class: 'note', text: 'Tipp: Mit der Maus über die Diagramme fahren oder ein Diagramm anklicken und mit ← → durch die Gänge gehen. Alle Werte stehen auch in der Kennwert-Tabelle unten.' }));
+    sec.replaceChildren(head, tiles, charts, h('p', { class: 'note', text: `Tipp: Mit der Maus über die Diagramme fahren oder ein Diagramm anklicken und mit ← → durch die ${nut ? 'Kugelrillen' : 'Gänge'} gehen. Alle Werte stehen auch in der Kennwert-Tabelle unten.${nut && ds.krGeometryDerived ? ' Die Lage der KR in Gängen ist aus den Nennmaßen der Steigungsfenster abgeleitet.' : ''}` }));
     if (hasBcd) drawBcd(bcdBox, u);
     if (hasLead) drawLead(leadBox, u);
   }
@@ -1033,6 +1361,7 @@ globalThis.SubCore = (function () {
     else if (kind === 'ctx') s('line', { x1: 1, x2: 17, y1: 6, y2: 6, stroke: 'var(--ctx)', 'stroke-width': 1.5 }, g);
     else if (kind === 'band') { s('rect', { x: 1, y: 2, width: 16, height: 8, fill: 'var(--tolband)' }, g); s('line', { x1: 1, x2: 17, y1: 2, y2: 2, class: 'tolline' }, g); s('line', { x1: 1, x2: 17, y1: 10, y2: 10, class: 'tolline' }, g); }
     else if (kind === 'tol2') { s('line', { x1: 1, x2: 17, y1: 6, y2: 6, class: 'tolline2' }, g); }
+    else if (kind === 'overall') { s('line', { x1: 1, x2: 17, y1: 6, y2: 6, stroke: 'var(--s1)', 'stroke-width': 1.5, 'stroke-dasharray': '5 3' }, g); }
     return g;
   }
   function triPath(cx, cy, r, up) {
@@ -1169,7 +1498,9 @@ globalThis.SubCore = (function () {
   // ------------------------------------------------------------ BCD-Diagramm
   function drawBcd(host, u) {
     const ds = state.ds, res = state.res, show = state.show;
-    const catB = ds.chars.filter((c) => c.cls.group === 'bcd');
+    const catB = ds.chars.filter((c) => c.cls.group === 'bcd' && c.cls.gang != null);
+    if (!catB.length) { host.replaceChildren(h('p', { class: 'empty', text: 'Keine BCD-Werte je Gang/KR.' })); return; }
+    const overallG = u.summary.bcd.overall && u.summary.bcd.overall.gauss;
     const nominal = u.summary.bcd.nominal ?? catB.find((c) => c.cls.fit === 'gauss')?.nominal ?? catB[0].nominal ?? 0;
     const U = (v) => (v - nominal) * 1000;
     const xd = gangDomain();
@@ -1193,12 +1524,13 @@ globalThis.SubCore = (function () {
       if (show.pferch && g.pferch) ys.push(U(g.pferch.stats.mean));
     }
     for (const o of others) for (const g of o.summary.bcd.profile) if (g.gauss) ys.push(U(g.gauss.stats.mean));
+    if (overallG && show.gauss) ys.push(U(overallG.stats.mean));
     const yd = niceDomain(ys, 7);
     const dd = decimalsForStep(yd.step);
     const f = frame(host, {
       height: chartHeight(330), x: xd, y: yd.domain, yTicks: yd.ticks, yFmt: (v) => fmtS(v, dd),
-      xTicks: gangs.map((g) => ({ v: g, label: String(g) })), xTitle: 'Gang',
-      aria: `BCD über Gang, ${unitTitle(u)}`,
+      xTicks: gangs.map((g) => ({ v: g, label: posLabel(g) })), xTitle: isNut() ? '' : 'Gang',
+      aria: `BCD über ${isNut() ? 'Kugelrillen' : 'Gang'}, ${unitTitle(u)}`,
     });
     const P = f.plot, k = f.k;
 
@@ -1219,6 +1551,10 @@ globalThis.SubCore = (function () {
     if (show.pferch && tol.pferch && !(tol.huell && show.huell && JSON.stringify(tol.huell.map((t) => [t.lsl, t.usl])) === JSON.stringify(tol.pferch.map((t) => [t.lsl, t.usl])))) hpTol.push(tol.pferch);
     for (const arr of hpTol) for (const key of ['lsl', 'usl']) s('path', { d: stepPathD(f, stepSegments(arr, key, xd), U), class: 'tolline2' }, P);
     s('line', { x1: f.m.l, x2: f.W - f.m.r, y1: f.y(0), y2: f.y(0), class: 'zero' }, P);
+    if (overallG && show.gauss) {
+      const Y = f.y(U(overallG.stats.mean));
+      s('line', { x1: f.m.l, x2: f.W - f.m.r, y1: Y, y2: Y, stroke: 'var(--s1)', 'stroke-width': 1.5 * k, 'stroke-dasharray': `${6 * k} ${4 * k}`, opacity: 0.8 }, P);
+    }
 
     // Kontext: andere Aufträge
     for (const o of others) {
@@ -1255,18 +1591,19 @@ globalThis.SubCore = (function () {
       for (const fit of FITS) {
         const e = g[fit];
         if (!e) continue;
-        const st = e.stats, d = e.char.decimals;
-        rows.push({ key: fit, value: `${fmtS(U(st.mean), 1)} µm`, label: `${C.FIT_LABEL[fit]} x̄ ${fmt(st.mean, d + 1)} · ${fmt(st.min, d)}–${fmt(st.max, d)}` });
+        const st = e.stats, d = dp(e.char);
+        rows.push({ key: fit, value: `${fmtS(U(st.mean), 1)} µm`, label: `${C.FIT_LABEL[fit]} x̄ ${fmt(st.mean, Math.min(d + 1, 4))} · ${fmt(st.min, d)}–${fmt(st.max, d)}` });
         foot.push(`${C.FIT_LABEL[fit]} ${e.char.position}: Tol. ${tolText(e.char, d)} · n = ${st.n}${st.below + st.above ? ` · ⚠ ${st.below + st.above} außerhalb` : ''}`);
       }
-      return tipBox(`Gang ${g.gang}`, rows, foot);
+      if (overallG) foot.push(`Zylinder gesamt ${overallG.char.position}: Gauss x̄ ${fmt(overallG.stats.mean, Math.min(dp(overallG.char) + 1, 4))} (${fmtS(U(overallG.stats.mean), 1)} µm)`);
+      return tipBox(posLabel(g.gang, true), rows, foot);
     });
   }
 
   // ------------------------------------------------------------ Steigungs-Diagramm
   function drawLead(host, u) {
     const ds = state.ds, res = state.res;
-    const catL = ds.chars.filter((c) => c.cls.group === 'lead').sort((a, b) => a.cls.from - b.cls.from);
+    const catL = ds.chars.filter((c) => c.cls.group === 'lead' && c.cls.from != null).sort((a, b) => a.cls.from - b.cls.from || b.cls.turns - a.cls.turns);
     const xd = gangDomain();
     const U = (v, c) => (v - (c.nominal ?? 0)) * 1000;
     const wins = u.summary.lead.windows;
@@ -1279,7 +1616,7 @@ globalThis.SubCore = (function () {
     const bounds = [...new Set(catL.flatMap((c) => [c.cls.from, c.cls.to]))].sort((a, b) => a - b);
     const f = frame(host, {
       height: chartHeight(isWide() ? 330 : 260), x: xd, y: yd.domain, yTicks: yd.ticks, yFmt: (v) => fmtS(v, dd),
-      xTicks: bounds.map((g) => ({ v: g, label: String(g) })), xTitle: 'Gang',
+      xTicks: bounds.map((g) => ({ v: g, label: posLabel(g) })), xTitle: isNut() ? '' : 'Gang',
       aria: `Steigung über Gewindelänge, ${unitTitle(u)}`,
     });
     const P = f.plot, k = f.k;
@@ -1308,11 +1645,11 @@ globalThis.SubCore = (function () {
     }
     if (!wins.length) return;
     crosshair(f, wins.map((w) => ({ x: f.x((w.from + w.to) / 2) })), (i) => {
-      const w = wins[i], st = w.stats, c = w.char, d = c.decimals;
-      return tipBox(`${c.cls.label} · ${w.turns} Gänge`, [
-        { key: 'gauss', value: `${fmtS(U(st.mean, c), 1)} µm`, label: `Länge x̄ ${fmt(st.mean, d + 1)} mm` },
+      const w = wins[i], st = w.stats, c = w.char, d = dp(c);
+      return tipBox(`${c.cls.label} · ${plGang(w.turns)}${c.cls.turnsDerived ? ' (aus Nennmaß abgeleitet)' : ''}`, [
+        { key: 'gauss', value: `${fmtS(U(st.mean, c), 1)} µm`, label: `Länge x̄ ${fmt(st.mean, Math.min(d + 1, 4))} mm` },
         { value: `${fmt(w.pitch, 5)} mm`, label: `Steigung je Gang${w.nominalPitch != null ? ` (Nenn ${fmt(w.nominalPitch, 3)})` : ''}` },
-        { value: `${fmt(st.min, d)}–${fmt(st.max, d)}`, label: `Min–Max · s = ${fmt(st.sd, d + 1)}` },
+        { value: `${fmt(st.min, d)}–${fmt(st.max, d)}`, label: `Min–Max · s = ${fmt(st.sd, Math.min(d + 1, 4))}` },
       ], `${c.position}: Tol. ${tolText(c, d)} · n = ${st.n}${st.below + st.above ? ` · ⚠ ${st.below + st.above} außerhalb` : ''}`);
     });
   }
@@ -1336,7 +1673,7 @@ globalThis.SubCore = (function () {
         h('div', null, h('h2', { text: 'Merkmal im Auftragsvergleich' }), h('p', { class: 'sub', text: 'Alle Einzelwerte je einbezogenem Fertigungsauftrag, Querstrich = Mittelwert. Spalte anklicken = Auftrag auswählen.' })),
         h('div', { class: 'toolbar' }, sel)),
       c ? h('div', { class: 'legend' },
-        h('span', { class: 'lg static' }, h('span', { class: 't', text: `${c.cls.label} · ${c.charText} ${c.position} · ${c.unit} · Tol. ${tolText(c, c.decimals)}` }))) : null,
+        h('span', { class: 'lg static' }, h('span', { class: 't', text: `${c.cls.label} · ${c.charText} ${c.position} · ${c.unit} · Tol. ${tolText(c, dp(c))}` }))) : null,
       box);
     if (c) drawCompare(box, c);
   }
@@ -1345,7 +1682,7 @@ globalThis.SubCore = (function () {
     const res = state.res;
     const units = res.order.map((o) => res.units.get(o)).filter((u) => u.included && u.chars.get(c.position));
     if (!units.length) { host.replaceChildren(h('p', { class: 'empty', text: 'Keine Werte in den einbezogenen Aufträgen.' })); return; }
-    const d = c.decimals;
+    const d = dp(c);
     const ys = units.flatMap((u) => u.chars.get(c.position).values);
     if (c.lsl != null) ys.push(c.lsl);
     if (c.usl != null) ys.push(c.usl);
@@ -1386,7 +1723,7 @@ globalThis.SubCore = (function () {
     crosshair(f, units.map((u, i) => ({ x: cx(i) })), (i) => {
       const u = units[i], st = u.chars.get(c.position);
       return tipBox(`Auftrag ${u.id} · Charge ${u.batch.batchNo || '–'}`, [
-        { key: 'gauss', value: `${fmt(st.mean, d + 1)} ${c.unit}`, label: `x̄ · s = ${fmt(st.sd, d + 1)}` },
+        { key: 'gauss', value: `${fmt(st.mean, Math.min(d + 1, 4))} ${c.unit}`, label: `x̄ · s = ${fmt(st.sd, Math.min(d + 1, 4))}` },
         { value: `${fmt(st.min, d)}–${fmt(st.max, d)}`, label: `Min–Max · n = ${st.n}` },
       ], st.below + st.above ? `⚠ ${st.below + st.above} außerhalb (${st.below} unter UGW, ${st.above} über OGW)` : 'alle Werte in Toleranz');
     }, (i) => select(units[i].id));
@@ -1397,11 +1734,15 @@ globalThis.SubCore = (function () {
     const sec = $('statsSec'), ds = state.ds, u = selUnit();
     const gl = Object.fromEntries(C.GROUPS.map((g) => [g.id, g.label]));
     const body = h('tbody');
-    let cur = null;
+    let cur = null, shown = 0;
+    const q = state.filter.trim().toLowerCase();
     for (const c of ds.charsGrouped) {
       const st = u.chars.get(c.position);
+      if (q && ![c.position, c.cls.label, c.remark, c.charText, gl[c.cls.sub]].some((t) => (t || '').toLowerCase().includes(q))) continue;
+      if (state.onlyOut && !(st && st.below + st.above)) continue;
+      shown++;
       if (c.cls.sub !== cur) { body.append(h('tr', { class: 'grp' }, h('td', { colspan: 13, text: gl[c.cls.sub] }))); cur = c.cls.sub; }
-      const d = c.decimals;
+      const d = dp(c);
       const two = c.lsl != null && c.usl != null && c.nominal != null;
       const dev = st && two ? (c.unit === 'mm' ? `${fmtS(um(st.mean - c.nominal), 1)} µm` : fmtS(st.mean - c.nominal, d + 1)) : '–';
       const out = st ? st.below + st.above : 0;
@@ -1412,19 +1753,26 @@ globalThis.SubCore = (function () {
         h('td', { text: c.position }), h('td', { text: c.cls.label }), h('td', { text: c.unit }),
         h('td', { class: 'num', text: fmt(c.nominal, d) }), h('td', { class: 'num', text: fmt(c.lsl, d) }), h('td', { class: 'num', text: fmt(c.usl, d) }),
         h('td', { class: 'num', text: st ? String(st.n) : '0' }),
-        h('td', { class: 'num', text: st ? fmt(st.mean, d + 1) : '–' }),
+        h('td', { class: 'num', text: st ? fmt(st.mean, Math.min(d + 1, 4)) : '–' }),
         h('td', { class: 'num', text: dev }),
-        h('td', { class: 'num', text: st ? fmt(st.sd, d + 1) : '–' }),
+        h('td', { class: 'num', text: st ? fmt(st.sd, Math.min(d + 1, 4)) : '–' }),
         h('td', { class: 'num', text: st ? fmt(st.min, d) : '–' }),
         h('td', { class: 'num', text: st ? fmt(st.max, d) : '–' }),
         h('td', { class: 'num' + (out ? ' oot' : ''), text: out ? `⚠ ${out} (↓${st.below} ↑${st.above})` : st ? '0' : '–' }),
       ));
     }
+    if (!shown) body.append(h('tr', null, h('td', { colspan: 13, class: 'muted', text: 'Keine Merkmale passen zum Filter.' })));
     const exportBtn = h('button', { class: 'btn', type: 'button', onclick: doExport, text: 'Kennwerte exportieren (CSV)' });
+    const search = h('input', { type: 'search', placeholder: 'Filter: Position, Merkmal, Text …', 'aria-label': 'Merkmale filtern', value: state.filter });
+    search.addEventListener('input', () => { state.filter = search.value; const pos = search.selectionStart; renderStats(); const n = $('statsSec').querySelector('input[type=search]'); n.focus(); try { n.setSelectionRange(pos, pos); } catch (e) { /* egal */ } });
+    const onlyOut = h('input', { type: 'checkbox', onchange: (e) => { state.onlyOut = e.target.checked; renderStats(); } });
+    onlyOut.checked = state.onlyOut;
+    const filters = h('div', { class: 'filters' }, search, h('label', null, onlyOut, 'nur Merkmale mit Werten außerhalb Toleranz'), h('span', { class: 'muted', text: `${shown} von ${ds.chars.length} Merkmalen` }));
     sec.replaceChildren(
       h('div', { class: 'sec-head' },
         h('div', null, h('h2', { text: 'Kennwerte' }), h('p', { class: 'sub', text: unitTitle(u) + ' · Zeile anklicken = Merkmal im Auftragsvergleich zeigen' })),
         h('div', { class: 'toolbar' }, exportBtn)),
+      filters,
       h('div', { class: 'scroll tall' }, h('table', null,
         h('thead', null, h('tr', null, ['Pos.', 'Merkmal', 'Einheit', 'Nennmaß', 'UGW', 'OGW', 'n', 'x̄', 'x̄ − Nenn', 's', 'Min', 'Max', 'außerhalb'].map((t, i) => h('th', { class: i >= 3 ? 'num' : null, text: t })))),
         body)),
@@ -1438,7 +1786,7 @@ globalThis.SubCore = (function () {
   function doExport() {
     const csv = C.exportCSV(state.ds, state.res);
     const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' });
-    const a = h('a', { href: URL.createObjectURL(blob), download: `Spindel_Kennwerte_${state.ds.material || 'Material'}_${new Date().toISOString().slice(0, 10)}.csv` });
+    const a = h('a', { href: URL.createObjectURL(blob), download: `${PART[state.ds.partType].label}_Kennwerte_${state.ds.material || 'Material'}_${new Date().toISOString().slice(0, 10)}.csv` });
     document.body.append(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(a.href), 2000);
   }
@@ -1457,7 +1805,8 @@ globalThis.SubCore = (function () {
   window.addEventListener('resize', redraw);
 
   // Für Tests/Automatisierung: Text direkt laden
-  globalThis.SubApp = { loadText: (text, name) => { const p = C.parseCAQ(text, name || 'eingefuegt.csv'); p.encoding = 'Text'; state.files = state.files.filter((x) => x.fileName !== p.fileName); state.files.push(p); rebuild(); }, state };
+  globalThis.SubApp = { loadText: (text, name) => { const p = C.parseCAQ(text, name || 'eingefuegt.csv'); p.encoding = 'Text'; addParsed([p]); }, states, switchPart, get state() { return state; } };
+  renderSteps();
 })();
 </script>
 </body>

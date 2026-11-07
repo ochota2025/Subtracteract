@@ -29,6 +29,7 @@ const same = (a, b) => assert.strictEqual(JSON.stringify(a), JSON.stringify(b));
 const near = (a, b, eps, msg) => assert.ok(Math.abs(a - b) <= (eps || 1e-9), `${msg || ''} erwartet ${b}, erhalten ${a}`);
 
 const SYN = fs.readFileSync(path.join(ROOT, 'testdata', 'synthetisch_spindel_P_HEAT.csv'));
+const SYN_NUT = fs.readFileSync(path.join(ROOT, 'testdata', 'synthetisch_mutter_P_TURN.csv'));
 
 console.log('Grundfunktionen');
 test('CSV: Anführungszeichen, "" und Zeilenumbruch im Feld, CRLF', () => {
@@ -59,6 +60,12 @@ test('Zeitstempel ISO und deutsch', () => {
   assert.strictEqual(C.parseTs('2026-10-25 03:00:00'), Date.UTC(2026, 9, 25, 3, 0, 0));
   assert.strictEqual(C.parseTs('25.10.2026 03:00'), Date.UTC(2026, 9, 25, 3, 0, 0));
   assert.strictEqual(C.parseTs('kein Datum'), null);
+});
+test('doppelt kodierte Umlaute reparieren, sonst nichts anfassen', () => {
+  assert.strictEqual(C.fixMojibake('ErststÃ¼ckprÃ¼fung'), 'Erststückprüfung');
+  assert.strictEqual(C.fixMojibake('Erststückprüfung'), 'Erststückprüfung');
+  assert.strictEqual(C.fixMojibake('Rändel-ø'), 'Rändel-ø');
+  assert.strictEqual(C.fixMojibake('Winkel 82° Nut'), 'Winkel 82° Nut');
 });
 test('Kodierung: UTF-8, sonst Windows-1252', () => {
   assert.strictEqual(C.decodeBytes(Buffer.from('Härte', 'utf8')).encoding, 'UTF-8');
@@ -233,32 +240,128 @@ test('nicht numerischer Messwert → übersprungen mit Warnung', () => {
   assert.strictEqual(f.records.length, 3766);
   assert.ok(f.issues.list().find((i) => i.code === 'value-nan'));
 });
-test('Mutter-Export versehentlich geladen → Warnung', () => {
+test('Teiletyp: Spindel erkannt (auch wenn der Materialtext „Mutter“ sagt, zählen die Merkmale)', () => {
+  assert.strictEqual(file.partType, 'spindel');
+  assert.strictEqual(ds.partType, 'spindel');
   const t = syn.text.replace(/Bauteil Spindel Beispiel - synthetisch/g, 'Bauteil Mutter Beispiel');
-  const ds3 = C.buildModel([C.parseCAQ(t, 'mutter.csv')]).datasets[0];
-  assert.ok(ds3.issues.list().find((i) => i.code === 'not-spindle'));
+  assert.strictEqual(C.parseCAQ(t, 'x.csv').partType, 'spindel');
+});
+test('Härteproben-ID („90010001_1“) ist keine Teile-UUID → keine Teile-Dubletten', () => {
+  assert.ok(!issues.find((i) => i.code === 'dup-uuid' || i.code === 'uuid-conflict'));
+  assert.strictEqual(ds.batches[0].nParts, null);
 });
 test('Export: Semikolon, Dezimalkomma, gepoolt + je Auftrag', () => {
   const csv = C.exportCSV(ds, res);
   const rows = csv.trim().split('\r\n');
   assert.strictEqual(rows.length, 1 + 39 * 11);
-  assert.ok(rows[1].startsWith('9990001;0100/P_HEAT;gepoolt (10 Aufträge)'));
+  assert.ok(rows[0].startsWith('Teil;Material;Prozess;'));
+  assert.ok(rows[1].startsWith('Spindel;9990001;0100/P_HEAT;gepoolt (10 Aufträge)'));
   assert.ok(/;16,5[0-9]*;/.test(rows.find((r) => r.includes(';432.02.GG;'))));
 });
 
-const REAL = process.env.CAQ_REAL;
-if (REAL) {
-  console.log('Echter Export (lokal, nicht im Repo): ' + path.basename(REAL));
+console.log('Synthetischer Mutter-Export');
+const nutText = C.decodeBytes(SYN_NUT).text;
+const nf = C.parseCAQ(nutText, 'mutter.csv');
+const nm = C.buildModel([nf], 'mutter');
+const nds = nm.datasets[0];
+const nIssues = [...nf.issues.list(), ...nm.issues.list(), ...nds.issues.list()];
+const nres = C.characterize(nds, new Set(nds.batches.map((b) => b.order)));
+test('als Mutter erkannt (Materialtext ist nur die Nummer)', () => {
+  assert.strictEqual(nf.fatal, null);
+  assert.strictEqual(nds.materialText, '9990002');
+  assert.strictEqual(nf.partType, 'mutter');
+  assert.strictEqual(nds.partType, 'mutter');
+  assert.strictEqual(nds.chars.length, 45);
+});
+test('Mutter-Datei im Reiter Spindel → Fehlerhinweis', () => {
+  const ds3 = C.buildModel([nf], 'spindel').datasets[0];
+  assert.strictEqual(ds3.partType, 'mutter');
+  assert.ok(ds3.issues.list().find((i) => i.code === 'wrong-type' && i.level === 'error'));
+});
+test('BCD je Kugelrille + Zylinder, Gauss/Hüll/Pferch', () => {
+  const n = {};
+  for (const c of nds.chars) n[c.cls.sub] = (n[c.cls.sub] || 0) + 1;
+  same([n['bcd-gauss'], n['bcd-huell'], n['bcd-pferch'], n.bcdx, n.lead, n.cyl], [5, 5, 5, 4, 3, 6]);
+  const c = nds.charMap.get('713.3.GN');
+  same([c.cls.fit, c.cls.kr, c.cls.gang], ['huell', 3, 6]);
+  assert.ok(nds.charMap.get('713.GX').cls.overall);
+});
+test('Durchmesser mit .GG ohne „BCD“ sind kein BCD (Außen-ø, Kern-ø, Lagersitz)', () => {
+  for (const pos of ['707.GG', '707.1.GG', '751.GG', '751.3.GG', '769.GG']) assert.strictEqual(nds.charMap.get(pos).cls.group, 'dia', pos);
+});
+test('BCD-Kennzahlen: Range und Kopie „wie 713.1.GG“ nicht im Profil', () => {
+  for (const pos of ['842', '842.GG', '892.GG', '884']) assert.strictEqual(nds.charMap.get(pos).cls.group, 'bcdx', pos);
+  assert.strictEqual(nds.charMap.get('884').cls.copyOf, '713.1.GG');
+});
+test('Steigungsfenster KR1–KR4 = 6 Gänge, Einzelgänge = 1; KR-Lage abgeleitet', () => {
+  same(['748', '748.1', '748.2'].map((p) => nds.charMap.get(p).cls.turns), [6, 1, 1]);
+  assert.ok(nds.krGeometryDerived);
+  same([...nds.krAt].sort((a, b) => a[0] - b[0]), [[1, 1], [2, 2], [3, 6], [4, 7]]);
+  same([nds.charMap.get('748').cls.from, nds.charMap.get('748').cls.to], [1, 7]);
+});
+test('Zylindrizität Gewinde je KR, Außen-ø als Form', () => {
+  assert.strictEqual(nds.charMap.get('792.2').cls.kr, 2);
+  assert.strictEqual(nds.charMap.get('793').cls.group, 'cyl');
+  assert.strictEqual(nds.charMap.get('743').cls.group, 'form');
+});
+test('Re-Importe: gleiche UUID + gleiche Werte → je Teil einmal gezählt', () => {
+  const parts = Object.fromEntries(nds.batches.map((b) => [b.order, b.nParts]));
+  same([parts['90020011'], parts['90020014'], parts['90020017'], parts['90020023']], [10, 5, 1, 10]);
+  assert.strictEqual(nm.records.length, 3870);
+  const d = nIssues.find((i) => i.code === 'dup-uuid');
+  assert.strictEqual(d.count, 15);
+  for (const st of nres.pooled.chars.values()) assert.ok(st.n <= 86);
+  assert.strictEqual(nres.pooled.chars.get('713.GG').n, 86);
+});
+test('dieselben Teile in zwei Aufträgen → Warnung, gezählt im zuerst gemessenen', () => {
+  const x = nIssues.find((i) => i.code === 'dup-cross-order');
+  assert.ok(x);
+  assert.ok(/gezählt in 90020014, verworfen in 90020017/.test(x.examples[0]));
+  assert.ok(nIssues.find((i) => i.code === 'few-parts'));
+});
+test('Umlaute repariert, Probe-Bemerkung lesbar', () => {
+  assert.ok(nIssues.find((i) => i.code === 'mojibake'));
+  assert.ok(nm.records.every((r) => !/Ã/.test(r.sampleRemark)));
+});
+test('Steckbrief Mutter: Zylinder-Gauss, Steigung aus 6-Gang-Fenster', () => {
+  const sm = nres.pooled.summary;
+  near(sm.bcd.gaussMean, nres.pooled.chars.get('713.GG').mean, 1e-12);
+  assert.strictEqual(sm.bcd.nominal, 16.55);
+  same(sm.bcd.profile.map((g) => g.kr), [1, 2, 3, 4]);
+  assert.strictEqual(sm.lead.mainTurns, 6);
+  near(sm.lead.pitchMean, nres.pooled.chars.get('748').mean / 6, 1e-12);
+  assert.strictEqual(sm.lead.spread, null);
+  assert.ok(sm.bcd.formOverall > sm.bcd.formMean, 'Hüll − Pferch des Zylinders ≥ Mittel je KR');
+  assert.ok(sm.ootThread > 0 && sm.ootThread < sm.oot);
+});
+test('Merkmal mit allen Werten außerhalb → Warnung', () => {
+  const x = nIssues.find((i) => i.code === 'sys-out');
+  assert.ok(/842/.test(x.examples[0]) && /1137/.test(x.examples[0]));
+});
+test('Export Mutter: Lage als KR', () => {
+  const rows = C.exportCSV(nds, nres).trim().split('\r\n');
+  assert.ok(rows[1].startsWith('Mutter;9990002;0200/P_TURN;'));
+  assert.ok(rows.some((r) => r.includes(';713.2.GG;') && r.includes(';KR2;')));
+  assert.ok(rows.some((r) => r.includes(';748;') && r.includes(';KR1-KR4;')));
+});
+
+// Optional: echte Exporte lokal mitprüfen (werden nie ins Repository übernommen)
+for (const [env, type, nBcd] of [['CAQ_REAL', 'spindel', 19], ['CAQ_REAL_NUT', 'mutter', 15]]) {
+  const REAL = process.env[env];
+  if (!REAL) continue;
+  console.log(`Echter Export ${type} (lokal, nicht im Repo): ` + path.basename(REAL));
   const t = C.decodeBytes(fs.readFileSync(REAL));
   const f = C.parseCAQ(t.text, path.basename(REAL));
-  const mm = C.buildModel([f]);
+  const mm = C.buildModel([f], type);
   const d = mm.datasets[0];
-  test('echter Export lesbar', () => {
+  test(`echter ${type}-Export lesbar und richtig erkannt`, () => {
     assert.strictEqual(f.fatal, null);
-    assert.strictEqual(d.chars.filter((c) => c.cls.group === 'bcd').length, 19);
+    assert.strictEqual(d.partType, type);
+    assert.strictEqual(d.detectedType, type);
+    assert.strictEqual(d.chars.filter((c) => c.cls.group === 'bcd').length, nBcd);
     assert.strictEqual(d.chars.filter((c) => c.cls.group === 'lead').length, 3);
-    console.log(`      ${f.records.length} Werte · ${d.batches.length} Aufträge · ${d.chars.length} Merkmale`);
-    for (const it of [...f.issues.list(), ...mm.issues.list(), ...d.issues.list()]) console.log(`      [${it.level}] ${it.msg} (${it.count}) ${it.examples.join(' · ')}`);
+    console.log(`      ${f.records.length} Werte → ${mm.records.length} nach Dubletten · ${d.batches.length} Aufträge · ${d.chars.length} Merkmale`);
+    for (const it of [...f.issues.list(), ...mm.issues.list(), ...d.issues.list()]) console.log(`      [${it.level}] ${it.msg} (${it.count}) ${it.examples.join(' · ').slice(0, 300)}`);
   });
 }
 
