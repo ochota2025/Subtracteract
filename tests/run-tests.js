@@ -261,6 +261,8 @@ test('Teiletyp: Spindel erkannt (auch wenn der Materialtext „Mutter“ sagt, z
 test('Härteproben-ID („90010001_1“) ist keine Teile-UUID → keine Teile-Dubletten', () => {
   assert.ok(!issues.find((i) => i.code === 'dup-uuid' || i.code === 'uuid-conflict'));
   assert.strictEqual(ds.batches[0].nParts, null);
+  // Spindeln werden nicht mehrfach gemessen (Vorgabe): Teilezahl = Werte je Merkmal
+  same([ds.batches[0].partCount, ds.batches[0].partSource], [10, 'werte']);
 });
 test('Export: Semikolon, Dezimalkomma, gepoolt + je Auftrag', () => {
   const csv = C.exportCSV(ds, res);
@@ -322,6 +324,7 @@ test('Zylindrizität Gewinde je KR, Außen-ø als Form', () => {
 test('Re-Importe: gleiche UUID + alle Werte gleich → Messung einmal gezählt', () => {
   const parts = Object.fromEntries(nds.batches.map((b) => [b.order, b.nParts]));
   same([parts['90020011'], parts['90020017'], parts['90020023']], [10, 1, 10]);
+  assert.ok(nds.batches.every((b) => b.partCount === b.nParts && b.partSource === 'uuid'));
   assert.strictEqual(nm.records.length, 81 * 45);
   const d = nIssues.find((i) => i.code === 'dup-uuid');
   assert.strictEqual(d.count, 10);

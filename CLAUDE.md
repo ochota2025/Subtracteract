@@ -40,7 +40,7 @@ Diese Datei wird in jeder neuen Claude-Code-Sitzung automatisch geladen. Sie hä
 - Spindel: `datInsp` ist die lokale Messzeit (Versatz zu UTC wechselt bei der Zeitumstellung). Mutter: `datInsp` ist der Prüfbeginn, die echte Messzeit steht in `datInspUTC`. Der zuerst gemessene Eintrag wird über UTC bestimmt.
 - Spindel-Prüfplantexte enthalten Kopierfehler (z. B. `432.14.GN` mit Text „BCD GG Gang 14“). Zugeordnet wird deshalb über die Position.
 - Mutter: Teile-UUID in `strUUID` (32 Hex-Zeichen). Re-Importe tragen dieselbe UUID mit identischen Werten. Fünf Teile standen in zwei Aufträgen, und ein Auftrag bestand nur aus diesen fünf Teilen.
-- Spindel: `strUUID` der Härteproben (Form `Auftrag_n`) ist keine Teile-ID.
+- Spindel: `strUUID` der Härteproben (Form `Auftrag_n`) ist keine Teile-ID. Spindeln werden nicht mehrfach gemessen (Nutzer): eine Messung = ein Teil, Teilezahl = Werte je Merkmal (`batch.partCount`, in den Matrixköpfen angezeigt).
 - Mutter: Viele `.GG`-Durchmesser sind kein BCD (Außen-ø, Kern-ø, Lagersitz). BCD nur mit „BCD“ im Prüfplantext.
 - Mutter-Prüfplan: `748` „Gew.Steigung (KR1-KR4)“ hat 17,4 mm Nennmaß, `748.1`/`748.2` haben je 2,9 mm. Das passt nicht zu „4 Gänge à 2,9 mm“ (dann wären es 8,7 mm). Nicht geklärt; die App vergleicht über gleiche Nennlänge, das ist davon unabhängig.
 - In Excel gespeicherte Exporte verfälschen Positionen (`404.1` → `404,1`, `449.10` → `449,1`). Die App warnt; immer den Original-Export verwenden.

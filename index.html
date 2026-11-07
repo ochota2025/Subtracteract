@@ -844,8 +844,9 @@ globalThis.SubCore = (function () {
     const batchToOrders = new Map();
     for (const r of ds.records) {
       let b = batches.get(r.order);
-      if (!b) batches.set(r.order, (b = { order: r.order, batchNos: new Map(), machines: new Map(), parts: new Set(), first: Infinity, last: -Infinity, n: 0 }));
+      if (!b) batches.set(r.order, (b = { order: r.order, batchNos: new Map(), machines: new Map(), parts: new Set(), perPos: new Map(), first: Infinity, last: -Infinity, n: 0 }));
       b.n++;
+      inc(b.perPos, r.position);
       if (r.batch) {
         inc(b.batchNos, r.batch);
         if (!batchToOrders.has(r.batch)) batchToOrders.set(r.batch, new Set());
@@ -860,6 +861,9 @@ globalThis.SubCore = (function () {
       b.batchNo = [...b.batchNos.keys()].join(', ');
       b.machine = [...b.machines.keys()].join(', ');
       b.nParts = b.parts.size || null;
+      // Teilezahl: über die Teile-UUID (Mutter); ohne UUID (Spindel) Werte je Merkmal – Spindeln werden nicht mehrfach gemessen (Vorgabe)
+      b.partCount = b.nParts != null ? b.nParts : Math.max(0, ...b.perPos.values());
+      b.partSource = b.nParts != null ? 'uuid' : 'werte';
       if (b.batchNos.size > 1) issues.add('warn', 'order-multi-batch', 'Fertigungsauftrag mit mehreren Chargennummern', `${b.order}: ${b.batchNo}`);
       if (!isFinite(b.first)) { b.first = null; b.last = null; }
       b.missing = ds.chars.filter((c) => !c.orders.has(b.order)).map((c) => c.position);
@@ -867,8 +871,8 @@ globalThis.SubCore = (function () {
     }
     for (const [bn, os] of batchToOrders) if (os.size > 1) issues.add('warn', 'batch-multi-order', 'Chargennummer in mehreren Fertigungsaufträgen', `${bn}: ${[...os].join(', ')}`);
     ds.batches = [...batches.values()].sort((a, b) => (a.first ?? 0) - (b.first ?? 0) || a.order.localeCompare(b.order));
-    const few = ds.batches.filter((b) => b.nParts != null && b.nParts < 3);
-    if (few.length) issues.add('warn', 'few-parts', 'Fertigungsauftrag mit weniger als 3 Teilen – Kennwerte wenig belastbar', few.map((b) => `${b.order}: ${b.nParts} Teil(e)`).join(' · '));
+    const few = ds.batches.filter((b) => b.partCount < 3);
+    if (few.length) issues.add('warn', 'few-parts', 'Fertigungsauftrag mit weniger als 3 Teilen – Kennwerte wenig belastbar', few.map((b) => `${b.order}: ${b.partCount} Teil(e)`).join(' · '));
     ds.periodLabel = ds.period ? `${fmtDay(ds.period[0])} – ${fmtDay(ds.period[1])}` : '–';
   }
 
@@ -2594,6 +2598,8 @@ globalThis.SubCore = (function () {
   const fmtPv = (p) => (p == null ? '–' : p < 0.001 ? '< 0,001' : NF_SIG2F.format(C.floorSig(p, 2)));
   const SRC_L = { own: 'eigene', borrowed: 'übernommen', none: 'nicht schätzbar' };
   const plTeil = (n) => `${n} ${n === 1 ? 'Teil' : 'Teile'}`;
+  /** Teilezahl eines Auftrags für die Matrixköpfe; ⚠ unter 3 Teilen (dann übernimmt die Fähigkeit die gepoolte Streuung). */
+  const partsTxt = (b) => `${plTeil(b.partCount)}${b.partCount < 3 ? ' ⚠' : ''}`;
   const capLim = (it) => (it.gang != null ? pair.pm.opts.bcdLim : pair.pm.opts.leadLim);
   const cpkPair = (c) => (c ? `${fmtCpk(c.cpk)} (${fmtCpk(c.cpkLo)})` : '–');
   /** Grund für den Status eines Orts. */
@@ -2807,10 +2813,10 @@ globalThis.SubCore = (function () {
       h('thead', null, h('tr', null,
         h('th', { class: 'rowh' }, 'Spindel ↓ · Mutter →'),
         pm.nuU.map((un) => h('th', { title: `Charge ${un.batch.batchNo} · ${un.batch.machine || ''}` }, un.id,
-          h('small', { text: `Ch. ${un.batch.batchNo || '–'}${un.batch.nParts != null ? ` · ${un.batch.nParts} Teil${un.batch.nParts === 1 ? '' : 'e'}${un.batch.nParts < 3 ? ' ⚠' : ''}` : ''}` }))),
+          h('small', { text: `Ch. ${un.batch.batchNo || '–'} · ${partsTxt(un.batch)}` }))),
         h('th', { class: 'sum', title: 'Anzahl Mutter-Aufträge ohne Grenzverletzung' }, 'passend'))),
       h('tbody', null, pm.spU.map((us) => h('tr', null,
-        h('th', { class: 'rowh' }, us.id, h('small', { text: `Ch. ${us.batch.batchNo || '–'} · ${fmtDay(us.batch.first)}` })),
+        h('th', { class: 'rowh' }, us.id, h('small', { text: `Ch. ${us.batch.batchNo || '–'} · ${partsTxt(us.batch)} · ${fmtDay(us.batch.first)}` })),
         pm.nuU.map((un) => cellNode(pm.cells.get(us.id + '|' + un.id))),
         h('td', { class: 'sum', text: `${pm.rowOk.get(us.id)} / ${pm.nuU.length}` })))),
       h('tfoot', null, h('tr', null,
