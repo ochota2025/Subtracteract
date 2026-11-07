@@ -488,6 +488,32 @@ test('Ausgeschlossene Aufträge fehlen in der Matrix', () => {
   const pm = C.pairing({ ds, res: C.characterize(ds, inc) }, nuPair, C.PAIR_DEFAULTS);
   assert.strictEqual(pm.spU.length, 9);
 });
+test('Kriterium ohne Daten → Zelle „unvollständig“, zählt nicht als passend', () => {
+  const t = rebuildNut((c) => (c[col('strPosition')].startsWith('748') ? null : c));
+  const d2 = C.buildModel([C.parseCAQ(t, 'ohne748.csv')], 'mutter').datasets[0];
+  const pm = C.pairing(spPair, { ds: d2, res: C.characterize(d2, new Set(d2.batches.map((b) => b.order))) }, C.PAIR_DEFAULTS);
+  assert.ok([...pm.cells.values()].every((c) => c.lead.status === 'na' && c.status !== 'ok'));
+  assert.strictEqual(pm.counts.bothOk, 0);
+  assert.strictEqual(pm.counts.leadNa, pm.counts.pairs);
+  assert.ok([...pm.rowOk.values()].every((n) => n === 0));
+});
+test('Hub bezieht sich auf KR1, auch bei negativem Versatz', () => {
+  const a = C.pairingGeometry(ds, nds, C.PAIR_DEFAULTS);
+  const b = C.pairingGeometry(ds, nds, Object.assign({}, C.PAIR_DEFAULTS, { krOffset: { 1: -1, 2: 0, 3: 1, 4: 2 } }));
+  same(b.visibility, a.visibility);
+  same([b.strokeFrom, b.strokeTo], [1, 14]);
+});
+test('Export: Reserve zur Grenze hin abgerundet', () => {
+  const pm = C.pairing(spPair, nuPair, C.PAIR_DEFAULTS);
+  const rows = C.exportPairingCSV(pm, ds, nds).trim().split('\r\n').slice(1);
+  const head = C.exportPairingCSV(pm, ds, nds).split('\r\n')[0].split(';');
+  const ri = head.indexOf('BCD_Reserve_um');
+  for (const r of rows) {
+    const cells = r.split(';');
+    const c = pm.cells.get(cells[1] + '|' + cells[4]);
+    assert.ok(Number(cells[ri].replace(',', '.')) <= c.bcd.reserve + 1e-12);
+  }
+});
 test('Matrix-Export: eine Zeile je Paar', () => {
   const pm = C.pairing(spPair, nuPair, C.PAIR_DEFAULTS);
   const rows = C.exportPairingCSV(pm, ds, nds).trim().split('\r\n');
