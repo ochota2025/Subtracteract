@@ -184,6 +184,12 @@ table.pm td.sum,table.pm th.sum{text-align:center;color:var(--text2)}
 td.vis{text-align:center}
 .pmlegend{display:flex;flex-wrap:wrap;gap:.3rem 1.1rem;margin:.6rem 0 0;font-size:.9rem;color:var(--text2);align-items:center}
 .pmlegend span{display:inline-flex;gap:.4rem;align-items:center}
+.mks{display:inline-flex;gap:.2rem;margin-left:.15rem}
+.mk{display:inline-block;padding:0 .3rem;border-radius:.35rem;background:var(--surface2);border:1px solid var(--border);color:var(--text2);font-size:.75rem;line-height:1.35;font-variant-numeric:normal}
+details.hints{margin:0 0 1rem;padding:.5rem .7rem;border-radius:.57rem;background:var(--surface2)}
+details.hints ul,.hintlist{margin:.2rem 0 0;padding-left:1.2rem;font-size:.9rem;color:var(--text2)}
+details.hints li,.hintlist li{margin:.15rem 0;overflow-wrap:anywhere}
+.hintlist{margin:0 0 1rem}
 /* Full HD und größer: volle Breite, Diagramme und Berichtsteile nebeneinander */
 @media (min-width:1600px){
   :root{--gap:1.3rem}
@@ -1197,7 +1203,7 @@ globalThis.SubCore = (function () {
         const s2raw = st.sd != null ? st.sd * st.sd : null;
         const e = {
           id: u.id, n: st.n, mean: st.mean, s: st.sd, s2: s2raw == null ? null : Math.max(s2raw, s2min), floored: s2raw != null && s2raw < s2min,
-          values: st.values, sUsed: null, df: null, src: 'none', F: null, fP: null, flagged: false, el: erstLetzt(st, s2min),
+          values: st.values, sUsed: null, df: null, src: 'none', F: null, fP: null, sOthers: null, flagged: false, el: erstLetzt(st, s2min), pool: null, d0: null,
         };
         if (st.n >= CAP.minN) { e.sUsed = Math.sqrt(e.s2); e.df = st.n - 1; e.src = 'own'; own.push(e); }
         byOrder.set(u.id, e);
@@ -1208,12 +1214,14 @@ globalThis.SubCore = (function () {
       for (const e of own) {
         const dfo = sumDf - e.df;
         if (!(dfo > 0)) continue;
-        e.F = e.s2 / ((sumSS - e.df * e.s2) / dfo);
+        const s2o = (sumSS - e.df * e.s2) / dfo;
+        e.sOthers = Math.sqrt(s2o);
+        e.F = e.s2 / s2o;
         e.fP = fSf(e.F, e.df, dfo);
         e.flagged = e.fP < CAP.alpha;
       }
       if (own.length >= CAP.minGroups) {
-        for (const e of byOrder.values()) if (e.src === 'none') { e.sUsed = pool.s; e.df = Math.min(sm.d0, sumDf); e.src = 'borrowed'; }
+        for (const e of byOrder.values()) if (e.src === 'none') { e.sUsed = pool.s; e.df = Math.min(sm.d0, sumDf); e.src = 'borrowed'; e.pool = pool; e.d0 = sm.d0; }
       }
       table.set(c.position, { position: c.position, byOrder, pool, d0: own.length >= 2 ? sm.d0 : null, h, s2min });
     }
@@ -1599,8 +1607,20 @@ globalThis.SubCore = (function () {
   let state = states.spindel;
   let view = 'spindel'; // 'spindel' | 'mutter' | 'paarung'
   const PAIR_KEY = 'subtracteract.paarung.v1';
-  const pair = { opts: loadPairOpts(), sel: null, pm: null, geoOpen: false };
-  function loadPairOpts() { try { return Object.assign({}, C.PAIR_DEFAULTS, JSON.parse(localStorage.getItem(PAIR_KEY) || '{}')); } catch (e) { return Object.assign({}, C.PAIR_DEFAULTS); } }
+  const pair = { opts: loadPairOpts(), sel: null, pm: null, geoOpen: false, hintsOpen: true, calcOpen: false };
+  /** Gespeicherte Einstellungen laden; ungültige oder veraltete Werte (z. B. die entfernte Bewertung „Mittelwerte“) fallen auf den Standard zurück. */
+  function loadPairOpts() {
+    const D = C.PAIR_DEFAULTS;
+    let o;
+    try { o = Object.assign({}, D, JSON.parse(localStorage.getItem(PAIR_KEY) || '{}')); } catch (e) { o = Object.assign({}, D); }
+    if (!C.PAIR_BASES.includes(o.basis)) o.basis = D.basis;
+    if (!FITS.includes(o.fit)) o.fit = D.fit;
+    const lim = (v) => Array.isArray(v) && v.length === 2 && v.every((x) => typeof x === 'number' && isFinite(x)) && v[0] < v[1];
+    if (!lim(o.bcdLim)) o.bcdLim = D.bcdLim.slice();
+    if (!lim(o.leadLim)) o.leadLim = D.leadLim.slice();
+    if (!(typeof o.warnReserve === 'number' && o.warnReserve >= 0)) o.warnReserve = D.warnReserve;
+    return o;
+  }
   function savePairOpts() { try { localStorage.setItem(PAIR_KEY, JSON.stringify(pair.opts)); } catch (e) { /* ohne Speicher weiter */ } }
   const isNut = () => state.ds && state.ds.partType === 'mutter';
   /** Beschriftung einer Position auf der Gewindeachse: Spindel = Gang, Mutter = Kugelrille. */
@@ -2478,6 +2498,9 @@ globalThis.SubCore = (function () {
   // ------------------------------------------------------------ Paarung
   const ST_ICON = { ok: '✓', warn: '!', out: '✕', na: '–' };
   const ST_LABEL = { ok: 'in Grenzen', warn: 'knapp', out: 'außerhalb', na: 'keine Daten' };
+  const ST_LABEL_CAP = { ok: 'ok', warn: 'knapp', out: 'außerhalb', na: 'keine Daten' };
+  const isCap = () => !!(pair.pm && pair.pm.opts.basis === 'cap');
+  const stL = (st) => (isCap() ? ST_LABEL_CAP : ST_LABEL)[st];
   const stIcon = (st) => h('i', { class: 'ic ' + st, 'aria-hidden': 'true', text: ST_ICON[st] });
   const fmtN = (v) => fmt(v, Number.isInteger(v) ? 0 : 1);
   /*
@@ -2488,7 +2511,7 @@ globalThis.SubCore = (function () {
   const fmtRes = (r) => (r == null || !isFinite(r) ? '–' : fmtS(floor1(r), 1));
   function rng(lo, hi, lim) {
     if (lo == null || !isFinite(lo)) return '–';
-    if (Math.abs(hi - lo) < 1e-9) { // Einzelwert (Mittelwert-Bewertung): zur näheren Grenze hin runden
+    if (Math.abs(hi - lo) < 1e-9) { // Einzelwert: zur näheren Grenze hin runden
       const [L, H] = lim || [-Infinity, Infinity];
       return fmtS(lo - L < H - lo ? floor1(lo) : ceil1(lo), 1);
     }
@@ -2497,6 +2520,73 @@ globalThis.SubCore = (function () {
   const rngB = (a) => rng(a.lo, a.hi, pair.pm && pair.pm.opts.bcdLim);
   const rngL = (a) => rng(a.lo, a.hi, pair.pm && pair.pm.opts.leadLim);
   const winLabel = (c) => c.cls.label.replace('Steigung ', '');
+
+  // ---- Fähigkeit (Cpk_Δ): Formatierung und Texte
+  /** Cpk auf 2 Stellen, zur Grenze hin abgerundet (konsistent mit dem Status). */
+  const fmtCpk = (v) => (v == null || !isFinite(v) ? '–' : fmt(C.floorTo(v, 2), 2));
+  const NF_SIG2 = new Intl.NumberFormat('de-DE', { maximumSignificantDigits: 2 });
+  /** Anteil außerhalb nur als Größenordnung: 2 signifikante Stellen, aufgerundet. */
+  function fmtP(p) {
+    if (p == null || !isFinite(p)) return '–';
+    if (p < 1e-8) return '< 0,01 ppm';
+    const v = C.ceilSig(p * 1e6, 2);
+    return v < 1000 ? `${NF_SIG2.format(v)} ppm` : `${NF_SIG2.format(C.ceilSig(p * 100, 2))} %`;
+  }
+  const fmtNu = (v) => (v == null ? '–' : !isFinite(v) ? '∞' : fmt(v, 1));
+  const fmtPv = (p) => (p == null ? '–' : p < 0.001 ? '< 0,001' : fmt(p, 3));
+  const SRC_L = { own: 'eigene', borrowed: 'übernommen', none: 'nicht schätzbar' };
+  const plTeil = (n) => `${n} ${n === 1 ? 'Teil' : 'Teile'}`;
+  const capLim = (it) => (it.gang != null ? pair.pm.opts.bcdLim : pair.pm.opts.leadLim);
+  const cpkPair = (c) => (c ? `${fmtCpk(c.cpk)} (${fmtCpk(c.cpkLo)})` : '–');
+  /** Grund für den Status eines Orts. */
+  function capReason(it) {
+    const c = it.cap;
+    if (!c) return 'keine Daten: Streuung nicht schätzbar (weniger als 3 einbezogene Aufträge mit mindestens 3 Teilen) – keine Bewertung';
+    if (it.status === 'out') return `außerhalb: Cpk_Δ ${fmtCpk(c.cpk)} < 1,00`;
+    if (it.status === 'warn') return `knapp: Fähigkeit nicht nachgewiesen – untere 95-%-Grenze ${fmtCpk(c.cpkLo)} < 1,00`;
+    return `ok: Cpk_Δ ≥ 1,00 mit 95 % nachgewiesen (untere Grenze ${fmtCpk(c.cpkLo)})`;
+  }
+  /** Hinweise zur Streuung eines Orts (σ*, σ!, E/L, nicht schätzbar). */
+  function flagLines(it) {
+    const r = [];
+    for (const [who, e] of [['Mutter', it.nutSpread], ['Spindel', it.spSpread]]) {
+      if (!e) continue;
+      if (e.src === 'borrowed') r.push(`σ* ${who}: ${plTeil(e.n)} – Streuung übernommen, gepoolt aus ${e.pool.k} Aufträgen (${fmt(um(e.sUsed), 2)} µm), ν = min(d̂₀ ${fmtNu(e.d0)}; Σν ${e.pool.df}) = ${fmtNu(e.df)}`);
+      if (e.src === 'none') r.push(`${who}: ${plTeil(e.n)}, Streuung nicht schätzbar`);
+      if (e.flagged) r.push(`σ! ${who}: Streuung auffällig, s ${fmt(um(e.sUsed), 2)} µm gegenüber ${fmt(um(e.sOthers), 2)} µm der übrigen Aufträge (F-Test p ${fmtPv(e.fP)})`);
+      if (e.el && e.el.flagged) r.push(`E/L ${who}: Letzt- − Erststücke ${fmtS(um(e.el.d), 1)} µm (Welch-Test p ${fmtPv(e.el.p)}), Streuung innerhalb der Gruppen ${fmt(um(e.el.sW), 2)} µm`);
+    }
+    return r;
+  }
+  /** Langtext eines Orts für Tooltip und Screenreader. */
+  function capItemText(it) {
+    const c = it.cap, lim = capLim(it);
+    const parts = [C.pairLoc(it)];
+    if (c) {
+      parts.push(`μΔ ${fmt(c.mu, 1)} µm`, `σΔ ${fmt(c.sd, 2)} µm (Mutter ${SRC_L[c.srcM]} ${fmt(c.sM, 2)}, Spindel ${SRC_L[c.srcS]} ${fmt(c.sS, 2)})`, `ν ${fmtNu(c.nu)}`,
+        `μΔ ± 3σΔ ${rng(c.lo, c.hi, lim)} µm`, `Cpk_Δ ${fmtCpk(c.cpk)}, untere 95-%-Grenze ${fmtCpk(c.cpkLo)}`, `außerhalb erwartet ≈ ${fmtP(c.pPred)}`,
+        `${c.kOut} von ${c.N} Teilekombinationen außerhalb`);
+    }
+    parts.push(`Min/Max ${rng(it.mm.lo, it.mm.hi, lim)} µm`);
+    return [parts.join(' · '), capReason(it), ...flagLines(it)].join('\n');
+  }
+  /** Marken am maßgeblichen Ort. */
+  function capMarks(it) {
+    if (!it || !it.flags) return null;
+    const m = [];
+    if (it.flags.borrowed.length) m.push(['σ*', `Streuung übernommen (${it.flags.borrowed.join(', ')})`]);
+    if (it.flags.sigma.length) m.push(['σ!', `Streuung auffällig (${it.flags.sigma.join(', ')})`]);
+    if (it.flags.el.length) m.push(['E/L', `Versatz Erst-/Letztstücke (${it.flags.el.join(', ')})`]);
+    return m.length ? h('span', { class: 'mks' }, m.map(([t, ti]) => h('span', { class: 'mk', title: ti, text: t }))) : null;
+  }
+  /** Zusammenfassung eines Kriteriums über alle Orte (Fähigkeit). */
+  function capAggText(a) {
+    if (!a.items.length) return 'keine vergleichbaren Werte';
+    const r = [`${a.items.length} ${a.items.length === 1 ? 'Ort' : 'Orte'}: ${a.nOut} außerhalb, ${a.nWarn} knapp${a.nNa ? `, ${a.nNa} ohne Daten` : ''}`];
+    if (a.pMax != null) r.push(`mind. ein Ort außerhalb ≈ ${fmtP(a.pMax)} … ${fmtP(a.pSum)}`);
+    if (a.minAt && a.minAt !== a.worst) r.push(`kleinster Cpk_Δ ${fmtCpk(a.cpkMin)} an ${C.pairLoc(a.minAt)}`);
+    return r.join(' · ');
+  }
 
   /** Zahlenfeld als Text: Komma oder Punkt; ungültige Eingaben werden sichtbar abgelehnt und der wirksame Wert bleibt stehen. */
   function numInput(label, value, onSet, step, check) {
@@ -2532,13 +2622,52 @@ globalThis.SubCore = (function () {
       options.map(([v, t]) => h('button', { type: 'button', class: 'segb', 'aria-pressed': String(o[key] === v), onclick: () => { o[key] = v; savePairOpts(); renderPairing(); }, text: t })));
   }
 
+  /** Name eines Merkmals in der Paarung: Spindel „Gang n“, Mutter „KRk“, Steigung das Fenster. */
+  function posName(part, pos) {
+    const c = states[part].ds && states[part].ds.charMap.get(pos);
+    if (!c) return pos;
+    if (c.cls.group === 'lead') return winLabel(c);
+    if (c.cls.kr != null) return `KR${c.cls.kr}`;
+    if (c.cls.gang != null) return `Gang ${c.cls.gang}`;
+    return pos;
+  }
+  const nameList = (part, poss) => {
+    const names = poss.map((p) => posName(part, p));
+    const gangs = names.filter((n) => /^Gang \d+$/.test(n)).map((n) => n.slice(5)), rest = names.filter((n) => !/^Gang \d+$/.test(n));
+    return [...(gangs.length ? [`Gang ${gangs.join(', ')}`] : []), ...rest].join(', ');
+  };
+  const spanOf = (vals, f) => { const lo = Math.min(...vals), hi = Math.max(...vals); return f(lo) === f(hi) ? f(lo) : `${f(lo)} … ${f(hi)}`; };
+  /** Hinweise zur Streuung je Auftrag an den verglichenen Merkmalen (σ*, σ!, E/L, nicht schätzbar). */
+  function spreadHints(pm) {
+    const out = [];
+    for (const [part, key, units] of [['mutter', 'nu', pm.nuU], ['spindel', 'sp', pm.spU]]) {
+      const ds = states[part].ds;
+      const poss = ds.charsGrouped.map((c) => c.position).filter((p) => pm.used[key].has(p));
+      for (const u of units) {
+        const ents = poss.map((p) => [p, pm.spread[key].get(p) && pm.spread[key].get(p).byOrder.get(u.id)]).filter(([, e]) => e);
+        const bits = [];
+        const pick = (f) => ents.filter(([, e]) => f(e));
+        const where = (l) => (l.length === ents.length ? 'an allen Orten' : `an ${nameList(part, l.map(([p]) => p))}`);
+        const bor = pick((e) => e.src === 'borrowed'), none = pick((e) => e.src === 'none');
+        if (bor.length) bits.push(`σ* ${plTeil(bor[0][1].n)} – Streuung übernommen ${where(bor)}`);
+        if (none.length) bits.push(`Streuung nicht schätzbar ${where(none)}`);
+        const sig = pick((e) => e.flagged);
+        if (sig.length) bits.push(`σ! Streuung auffällig an ${nameList(part, sig.map(([p]) => p))}: s ${spanOf(sig.map(([, e]) => um(e.sUsed)), (v) => fmt(v, 1))} µm, übrige ≈ ${spanOf(sig.map(([, e]) => um(e.sOthers)), (v) => fmt(v, 1))} µm`);
+        const el = pick((e) => e.el && e.el.flagged);
+        if (el.length) bits.push(`E/L Letzt- − Erststücke ${spanOf(el.map(([, e]) => um(e.el.d)), (v) => fmtS(v, 1))} µm an ${nameList(part, el.map(([p]) => p))}`);
+        if (bits.length) out.push(h('li', null, h('strong', { text: `${PART[part].label} ${u.id}: ` }), bits.join(' · ')));
+      }
+    }
+    return out;
+  }
+
   function renderPairing() {
     const sec = $('pairSec'), det = $('pairDetailSec');
     sec.hidden = false;
     const sp = states.spindel, nu = states.mutter, o = pair.opts;
     const head = h('div', { class: 'sec-head' },
       h('div', null, h('h2', { text: 'Paarung Spindel × Mutter' }),
-        h('p', { class: 'sub', text: 'Alle einbezogenen Spindel-Aufträge (Zeilen) gegen alle einbezogenen Mutter-Aufträge (Spalten). Δ = Mutter − Spindel in µm. BCD: je Spindelgang gegen die Kugelrillen (KR), die über diesen Gang laufen. Steigung: je Mutterfenster gegen alle Spindelfenster gleicher Nennlänge. Zelle anklicken = Paar im Detail.' })));
+        h('p', { class: 'sub', text: 'Alle einbezogenen Spindel-Aufträge (Zeilen) gegen alle einbezogenen Mutter-Aufträge (Spalten). Δ = Mutter − Spindel in µm. BCD: je Spindelgang gegen die Kugelrillen (KR), die über diesen Gang laufen. Steigung: je Mutterfenster gegen alle Spindelfenster gleicher Nennlänge. Bewertung über Min/Max der Einzelteile oder über die Paarungsfähigkeit Cpk_Δ. Zelle anklicken = Paar im Detail.' })));
     const missing = ['spindel', 'mutter'].filter((p) => !states[p].res).map((p) => PART[p].label);
     if (missing.length) {
       sec.replaceChildren(head, h('p', { class: 'empty', text: `Für die Paarung fehlt noch der ${missing.join('- und der ')}-Export. Datei oben hineinziehen – Spindel und Mutter werden automatisch erkannt.` }));
@@ -2546,45 +2675,67 @@ globalThis.SubCore = (function () {
       return;
     }
     const pm = pair.pm = C.pairing({ ds: sp.ds, res: sp.res }, { ds: nu.ds, res: nu.res }, o);
+    const cap = pm.opts.basis === 'cap';
     const exportBtn = h('button', { class: 'btn', type: 'button', onclick: () => doExportPairing(pm), text: 'Matrix exportieren (CSV)' });
     head.append(h('div', { class: 'toolbar' }, exportBtn));
     const controls = h('div', { class: 'filters' },
       segGroup('Auswertung', 'fit', [['gauss', 'Gauss'], ['huell', 'Hüll'], ['pferch', 'Pferch']]),
-      segGroup('Bewertung', 'basis', [['minmax', 'Min/Max Einzelwerte'], ['mean', 'Mittelwerte']]),
+      segGroup('Bewertung', 'basis', [['minmax', 'Min/Max Einzelwerte'], ['cap', 'Fähigkeit (Cpk_Δ)']]),
       h('label', null, 'BCD', numInput('BCD-Untergrenze', o.bcdLim[0], (v) => { o.bcdLim = [v, o.bcdLim[1]]; }, null, (v) => (v >= o.bcdLim[1] ? `Untergrenze muss kleiner als die Obergrenze (${fmtN(o.bcdLim[1])} µm) sein.` : null)),
         '…', numInput('BCD-Obergrenze', o.bcdLim[1], (v) => { o.bcdLim = [o.bcdLim[0], v]; }, null, (v) => (v <= o.bcdLim[0] ? `Obergrenze muss größer als die Untergrenze (${fmtN(o.bcdLim[0])} µm) sein.` : null)), 'µm'),
       h('label', null, 'Steigung ±', numInput('Steigungsgrenze', o.leadLim[1], (v) => { o.leadLim = [-Math.abs(v), Math.abs(v)]; }, null, (v) => (v <= 0 ? 'Die Steigungsgrenze muss größer als 0 sein.' : null)), 'µm'),
-      h('label', null, 'knapp unter', numInput('Reserve für „knapp“', o.warnReserve, (v) => { o.warnReserve = v; }, null, (v) => (v < 0 ? 'Die Reserve für „knapp“ darf nicht negativ sein.' : null)), 'µm Reserve'),
+      cap ? h('span', { class: 'muted', text: 'außerhalb: Cpk_Δ < 1,00 · knapp: untere 95-%-Grenze < 1,00' })
+        : h('label', null, 'knapp unter', numInput('Reserve für „knapp“', o.warnReserve, (v) => { o.warnReserve = v; }, null, (v) => (v < 0 ? 'Die Reserve für „knapp“ darf nicht negativ sein.' : null)), 'µm Reserve'),
       h('button', { class: 'btn', type: 'button', onclick: () => { pair.opts = Object.assign({}, C.PAIR_DEFAULTS); savePairOpts(); renderPairing(); }, text: 'Standard' }));
     if (!pm.spU.length || !pm.nuU.length) {
       sec.replaceChildren(head, controls, h('p', { class: 'empty', text: 'Kein Auftrag einbezogen – Haken in den Reitern Spindel bzw. Mutter prüfen.' }));
       det.hidden = true;
       return;
     }
-    if (!pair.sel || !pm.cells.has(pair.sel)) {
-      let best = null, br = Infinity;
-      for (const c of pm.cells.values()) { const r = Math.min(c.bcd.reserve ?? Infinity, c.lead.reserve ?? Infinity); if (r < br) { br = r; best = c; } }
-      pair.sel = best ? best.key : null;
-    }
+    if (!pair.sel || !pm.cells.has(pair.sel)) pair.sel = pm.worst ? pm.worst.key : null;
     const cnt = pm.counts, fitL = C.FIT_LABEL[o.fit];
     const wb = pm.worstBcd, wl = pm.worstLead;
-    const tiles = h('div', { class: 'tiles' },
-      tile('Paare', String(cnt.pairs), `${pm.spU.length} Spindel-${pm.spU.length === 1 ? 'Auftrag' : 'Aufträge'} × ${pm.nuU.length} Mutter-${pm.nuU.length === 1 ? 'Auftrag' : 'Aufträge'}`),
-      tile(`BCD (${fitL}) außerhalb ${fmtN(o.bcdLim[0])}…${fmtN(o.bcdLim[1])} µm`, String(cnt.bcdOut), `${cnt.bcdWarn} knapp (Reserve < ${fmtN(o.warnReserve)} µm)`, cnt.bcdOut > 0),
-      tile(`Steigung außerhalb ±${fmtN(o.leadLim[1])} µm`, String(cnt.leadOut), `${cnt.leadWarn} knapp`, cnt.leadOut > 0),
-      cnt.incomplete ? tile('Unvollständig bewertet', String(cnt.incomplete), `ohne BCD-Vergleich: ${cnt.bcdNa} · ohne Steigungsvergleich: ${cnt.leadNa} – zählen nicht als „passend“`, true) : null,
-      tile('Kleinste Reserve BCD', wb ? `${fmtRes(wb.bcd.reserve)} µm` : '–', wb ? `Spindel ${wb.s.id} × Mutter ${wb.n.id} · Gang ${wb.bcd.worst.gang} / KR${wb.bcd.worst.kr}` : null, wb && wb.bcd.reserve < 0),
-      tile('Kleinste Reserve Steigung', wl ? `${fmtRes(wl.lead.reserve)} µm` : '–', wl ? `Spindel ${wl.s.id} × Mutter ${wl.n.id} · ${winLabel(wl.lead.worst.nutChar)} / ${winLabel(wl.lead.worst.spChar)}` : null, wl && wl.lead.reserve < 0),
-    );
+    const minTile = (lab, c, crit) => {
+      const a = c && c[crit], it = a && a.minAt;
+      return tile(lab, it ? fmtCpk(a.cpkMin) : '–', it ? `untere Grenze ${fmtCpk(it.cap.cpkLo)} · Spindel ${c.s.id} × Mutter ${c.n.id} · ${C.pairLoc(it)}` : 'nicht bewertbar', !!(it && it.cap.cpk < 1 - 1e-9));
+    };
+    const tiles = cap
+      ? h('div', { class: 'tiles' },
+        tile('Paare', String(cnt.pairs), `${pm.spU.length} Spindel-${pm.spU.length === 1 ? 'Auftrag' : 'Aufträge'} × ${pm.nuU.length} Mutter-${pm.nuU.length === 1 ? 'Auftrag' : 'Aufträge'}`),
+        tile(`BCD (${fitL}) nicht fähig (Cpk_Δ < 1,00)`, String(cnt.bcdOut), `${cnt.bcdWarn} knapp (Fähigkeit nicht nachgewiesen)`, cnt.bcdOut > 0),
+        tile('Steigung nicht fähig (Cpk_Δ < 1,00)', String(cnt.leadOut), `${cnt.leadWarn} knapp (Fähigkeit nicht nachgewiesen)`, cnt.leadOut > 0),
+        cnt.incomplete ? tile('Unvollständig bewertet', String(cnt.incomplete), `ohne BCD-Bewertung: ${cnt.bcdNa} · ohne Steigungsbewertung: ${cnt.leadNa} – zählen nicht als „passend“`, true) : null,
+        minTile('Kleinster Cpk_Δ BCD', pm.minCapBcd, 'bcd'),
+        minTile('Kleinster Cpk_Δ Steigung', pm.minCapLead, 'lead'))
+      : h('div', { class: 'tiles' },
+        tile('Paare', String(cnt.pairs), `${pm.spU.length} Spindel-${pm.spU.length === 1 ? 'Auftrag' : 'Aufträge'} × ${pm.nuU.length} Mutter-${pm.nuU.length === 1 ? 'Auftrag' : 'Aufträge'}`),
+        tile(`BCD (${fitL}) außerhalb ${fmtN(o.bcdLim[0])}…${fmtN(o.bcdLim[1])} µm`, String(cnt.bcdOut), `${cnt.bcdWarn} knapp (Reserve < ${fmtN(o.warnReserve)} µm)`, cnt.bcdOut > 0),
+        tile(`Steigung außerhalb ±${fmtN(o.leadLim[1])} µm`, String(cnt.leadOut), `${cnt.leadWarn} knapp`, cnt.leadOut > 0),
+        cnt.incomplete ? tile('Unvollständig bewertet', String(cnt.incomplete), `ohne BCD-Vergleich: ${cnt.bcdNa} · ohne Steigungsvergleich: ${cnt.leadNa} – zählen nicht als „passend“`, true) : null,
+        tile('Kleinste Reserve BCD', wb ? `${fmtRes(wb.bcd.reserve)} µm` : '–', wb ? `Spindel ${wb.s.id} × Mutter ${wb.n.id} · Gang ${wb.bcd.worst.gang} / KR${wb.bcd.worst.kr}` : null, wb && wb.bcd.reserve < 0),
+        tile('Kleinste Reserve Steigung', wl ? `${fmtRes(wl.lead.reserve)} µm` : '–', wl ? `Spindel ${wl.s.id} × Mutter ${wl.n.id} · ${winLabel(wl.lead.worst.nutChar)} / ${winLabel(wl.lead.worst.spChar)}` : null, wl && wl.lead.reserve < 0));
+    const hints = cap ? spreadHints(pm) : [];
+    const hintBox = hints.length ? h('details', { class: 'hints', ontoggle: (e) => { pair.hintsOpen = e.target.open; } },
+      h('summary', null, `Hinweise zur Streuung (${hints.length} ${hints.length === 1 ? 'Auftrag' : 'Aufträge'}) `, h('span', { text: '· σ* übernommen · σ! auffällig · E/L Versatz Erst-/Letztstücke – σ! und E/L gehen nicht in den Status ein' })),
+      h('ul', null, hints)) : null;
+    if (hintBox) hintBox.open = pair.hintsOpen !== false;
     // Matrix
+    const capLine = (lab, a) => {
+      const w = a.worst;
+      return h('div', { class: 'cl' }, stIcon(a.status), h('span', { class: 'cl-l', text: lab }), h('span', { class: 'cl-v', text: w ? cpkPair(w.cap) : '–' }), capMarks(w));
+    };
+    const capAria = (lab, a) => (a.worst ? `${lab} ${ST_LABEL_CAP[a.status]}${a.worst.cap ? `, Cpk_Δ ${fmtCpk(a.worst.cap.cpk)}, untere Grenze ${fmtCpk(a.worst.cap.cpkLo)}` : ''} an ${C.pairLoc(a.worst)}` : `${lab} keine Daten`);
+    const capTitle = (lab, a) => `${lab} – ${ST_LABEL_CAP[a.status]}: ${a.worst ? capItemText(a.worst) : 'keine vergleichbaren Werte'}\n${capAggText(a)}`;
     const cellNode = (cell) => {
       const sel = pair.sel === cell.key;
       const line = (lab, a, f) => h('div', { class: 'cl' }, stIcon(a.status), h('span', { class: 'cl-l', text: lab }), h('span', { class: 'cl-v', text: f(a) }));
       return h('td', {
         class: `cell st-${cell.status}${sel ? ' sel' : ''}`, tabindex: 0, role: 'button', 'aria-pressed': String(sel), 'data-key': cell.key,
-        'aria-label': `Spindel ${cell.s.id} mit Mutter ${cell.n.id}: BCD ${ST_LABEL[cell.bcd.status]} ${rngB(cell.bcd)} µm, Steigung ${ST_LABEL[cell.lead.status]} ${rngL(cell.lead)} µm`,
+        'aria-label': cap ? `Spindel ${cell.s.id} mit Mutter ${cell.n.id}: ${capAria('BCD', cell.bcd)}; ${capAria('Steigung', cell.lead)}`
+          : `Spindel ${cell.s.id} mit Mutter ${cell.n.id}: BCD ${ST_LABEL[cell.bcd.status]} ${rngB(cell.bcd)} µm, Steigung ${ST_LABEL[cell.lead.status]} ${rngL(cell.lead)} µm`,
+        title: cap ? `Spindel ${cell.s.id} × Mutter ${cell.n.id}\n\n${capTitle(`BCD (${fitL})`, cell.bcd)}\n\n${capTitle('Steigung', cell.lead)}` : null,
         onclick: () => selectPair(cell.key), onkeydown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); selectPair(cell.key); } },
-      }, line('BCD', cell.bcd, rngB), line('Stg.', cell.lead, rngL));
+      }, cap ? [capLine('BCD', cell.bcd), capLine('Stg.', cell.lead)] : [line('BCD', cell.bcd, rngB), line('Stg.', cell.lead, rngL)]);
     };
     const table = h('table', { class: 'pm' },
       h('thead', null, h('tr', null,
@@ -2600,9 +2751,14 @@ globalThis.SubCore = (function () {
         h('th', { class: 'rowh', title: 'Anzahl Spindel-Aufträge ohne Grenzverletzung' }, 'passend'),
         pm.nuU.map((un) => h('td', { class: 'sum', text: `${pm.colOk.get(un.id)} / ${pm.spU.length}` })),
         h('td', { class: 'sum' }))));
-    const legend = h('div', { class: 'pmlegend' },
-      h('span', null, stIcon('ok'), 'in Grenzen'), h('span', null, stIcon('warn'), `knapp (Reserve < ${fmtN(o.warnReserve)} µm)`), h('span', null, stIcon('out'), 'außerhalb'), h('span', null, stIcon('na'), 'keine Vergleichsdaten'),
-      h('span', { class: 'muted', text: `Werte: Δ ${o.basis === 'mean' ? 'der Auftragsmittel' : 'Min … Max aus den ungünstigsten Einzelteilen'} in µm, auf 0,1 µm zur Grenze hin gerundet · BCD ${fitL} · „passend“ = beide Kriterien bewertet und keines außerhalb` }));
+    const legend = cap
+      ? h('div', { class: 'pmlegend' },
+        h('span', null, stIcon('ok'), 'ok: Cpk_Δ ≥ 1,00 mit 95 % nachgewiesen'), h('span', null, stIcon('warn'), 'knapp: Cpk_Δ ≥ 1,00, aber nicht nachgewiesen (untere 95-%-Grenze < 1,00)'), h('span', null, stIcon('out'), 'außerhalb: Cpk_Δ < 1,00'), h('span', null, stIcon('na'), 'keine Daten'),
+        h('span', null, h('span', { class: 'mk', text: 'σ*' }), 'Streuung übernommen (Auftrag < 3 Teile)'), h('span', null, h('span', { class: 'mk', text: 'σ!' }), 'Streuung auffällig'), h('span', null, h('span', { class: 'mk', text: 'E/L' }), 'Versatz Erst-/Letztstücke'),
+        h('span', { class: 'muted', text: `Zahl = Cpk_Δ (untere 95-%-Grenze) am maßgeblichen Ort, auf 2 Stellen abgerundet · BCD ${fitL} · Paarungsfähigkeit der Differenz Mutter − Spindel bei zufälliger Kombination, keine Teilefähigkeit nach ISO 22514 · das Minimum über alle Orte ist keine gemeinsame 95-%-Aussage · Tooltip und Detail zeigen den Rechenweg · „passend“ = beide Kriterien bewertet und keines außerhalb` }))
+      : h('div', { class: 'pmlegend' },
+        h('span', null, stIcon('ok'), 'in Grenzen'), h('span', null, stIcon('warn'), `knapp (Reserve < ${fmtN(o.warnReserve)} µm)`), h('span', null, stIcon('out'), 'außerhalb'), h('span', null, stIcon('na'), 'keine Vergleichsdaten'),
+        h('span', { class: 'muted', text: `Werte: Δ Min … Max aus den ungünstigsten Einzelteilen in µm, auf 0,1 µm zur Grenze hin gerundet · BCD ${fitL} · „passend“ = beide Kriterien bewertet und keines außerhalb` }));
     // Sichtbarkeit
     const g = pm.geo;
     const geoDet = h('details', { ontoggle: (e) => { pair.geoOpen = e.target.open; } },
@@ -2621,7 +2777,7 @@ globalThis.SubCore = (function () {
           h('p', { class: 'note', text: 'Standard (Vorgabe): Die Mutter hat 4 Gänge, KR1…KR4 = Gang 1…4 der Mutter; sie fährt über das ganze gemessene Gewinde der Spindel – Gang 1 sieht KR1, Gang 3 KR1–3, der vorletzte Gang KR3–4, der letzte Gang nur KR4.' }))));
     geoDet.open = pair.geoOpen;
     const msg = h('div', { id: 'pairMsg', class: 'notice', role: 'status', hidden: true });
-    sec.replaceChildren(head, controls, msg, tiles, h('div', { class: 'scroll' }, table), legend, h('div', { style: 'margin-top:1rem' }, geoDet));
+    sec.replaceChildren(...[head, controls, msg, tiles, hintBox, h('div', { class: 'scroll' }, table), legend, h('div', { style: 'margin-top:1rem' }, geoDet)].filter(Boolean));
     renderPairDetail();
   }
 
@@ -2641,20 +2797,37 @@ globalThis.SubCore = (function () {
     const det = $('pairDetailSec'), pm = pair.pm;
     if (!pm || !pair.sel || !pm.cells.has(pair.sel)) { det.hidden = true; det.replaceChildren(); return; }
     det.hidden = false;
-    const cell = pm.cells.get(pair.sel), o = pm.opts, g = pm.geo, fitL = C.FIT_LABEL[o.fit];
-    const basisL = o.basis === 'mean' ? 'Differenz der Auftragsmittel' : 'Min … Max aus den ungünstigsten Einzelteilen';
+    const cell = pm.cells.get(pair.sel), o = pm.opts, g = pm.geo, fitL = C.FIT_LABEL[o.fit], cap = o.basis === 'cap';
+    const basisL = cap ? `Paarungsfähigkeit Cpk_Δ (untere ${Math.round(C.CAP.conf * 100)}-%-Grenze)` : 'Min … Max aus den ungünstigsten Einzelteilen';
     const head = h('div', { class: 'sec-head' }, h('div', null,
       h('h2', { text: `Spindel ${cell.s.id} × Mutter ${cell.n.id}` }),
       h('p', { class: 'sub', text: `Charge ${cell.s.batch.batchNo || '–'} × ${cell.n.batch.batchNo || '–'} · BCD ${fitL} · ${basisL} · Δ = Mutter − Spindel` })));
     const wB = cell.bcd.worst, wL = cell.lead.worst;
-    const tiles = h('div', { class: 'tiles' },
-      tile('ΔBCD', cell.bcd.lo != null ? `${rngB(cell.bcd)} µm` : '–', wB ? `${ST_LABEL[cell.bcd.status]} · Reserve ${fmtRes(cell.bcd.reserve)} µm · knappste Stelle Gang ${wB.gang} / KR${wB.kr}` : 'keine vergleichbaren BCD-Werte', cell.bcd.status === 'out'),
-      tile('ΔSteigung', cell.lead.lo != null ? `${rngL(cell.lead)} µm` : '–', wL ? `${ST_LABEL[cell.lead.status]} · Reserve ${fmtRes(cell.lead.reserve)} µm · ${winLabel(wL.nutChar)} / ${winLabel(wL.spChar)}` : 'keine vergleichbaren Steigungsfenster', cell.lead.status === 'out'),
-      tile('Grenzen', `BCD ${fmtN(o.bcdLim[0])}…${fmtN(o.bcdLim[1])} · Stg. ±${fmtN(o.leadLim[1])}`, `µm · knapp unter ${fmtN(o.warnReserve)} µm Reserve`));
+    const capTile = (lab, a, none) => {
+      const w = a.worst, c = w && w.cap;
+      if (!w) return tile(lab, '–', none);
+      const d = [`${ST_LABEL_CAP[a.status]} · maßgeblich ${C.pairLoc(w)}`];
+      if (c) d.push(`μΔ ${fmt(c.mu, 1)} µm, ± 3σΔ ${rng(c.lo, c.hi, capLim(w))} µm`, `außerhalb erwartet ≈ ${fmtP(c.pPred)}`, `${c.kOut} von ${c.N} Kombinationen außerhalb`);
+      else d.push('Streuung nicht schätzbar');
+      if (a.items.length > 1 && a.pMax != null) d.push(`mind. ein Ort außerhalb ≈ ${fmtP(a.pMax)} … ${fmtP(a.pSum)}`);
+      return tile(lab, c ? `Cpk_Δ ${cpkPair(c)}` : '–', d.join(' · '), a.status === 'out');
+    };
+    const tiles = cap
+      ? h('div', { class: 'tiles' },
+        capTile('ΔBCD', cell.bcd, 'keine vergleichbaren BCD-Werte'),
+        capTile('ΔSteigung', cell.lead, 'keine vergleichbaren Steigungsfenster'),
+        tile('Grenzen', `BCD ${fmtN(o.bcdLim[0])}…${fmtN(o.bcdLim[1])} · Stg. ±${fmtN(o.leadLim[1])}`, 'µm · außerhalb bei Cpk_Δ < 1,00 · knapp bei unterer 95-%-Grenze < 1,00 · Zahl in Klammern = untere Grenze'))
+      : h('div', { class: 'tiles' },
+        tile('ΔBCD', cell.bcd.lo != null ? `${rngB(cell.bcd)} µm` : '–', wB ? `${ST_LABEL[cell.bcd.status]} · Reserve ${fmtRes(cell.bcd.reserve)} µm · knappste Stelle Gang ${wB.gang} / KR${wB.kr}` : 'keine vergleichbaren BCD-Werte', cell.bcd.status === 'out'),
+        tile('ΔSteigung', cell.lead.lo != null ? `${rngL(cell.lead)} µm` : '–', wL ? `${ST_LABEL[cell.lead.status]} · Reserve ${fmtRes(cell.lead.reserve)} µm · ${winLabel(wL.nutChar)} / ${winLabel(wL.spChar)}` : 'keine vergleichbaren Steigungsfenster', cell.lead.status === 'out'),
+        tile('Grenzen', `BCD ${fmtN(o.bcdLim[0])}…${fmtN(o.bcdLim[1])} · Stg. ±${fmtN(o.leadLim[1])}`, `µm · knapp unter ${fmtN(o.warnReserve)} µm Reserve`));
+    const flagNotes = cap ? [...new Set([wB, wL].filter(Boolean).flatMap(flagLines))] : [];
     const box = h('div', { class: 'chartbox' });
     const shapes = ['circle', 'up', 'square', 'diamond'];
     const legend = h('div', { class: 'legend' },
-      g.krs.map((k, i) => h('span', { class: 'lg static' }, shapeGlyph(shapes[i % shapes.length]), h('span', { class: 't', text: `KR${k}: Δ ${o.basis === 'mean' ? 'Mittel' : 'Min…Max, Punkt = Mittel'}` }))),
+      g.krs.map((k, i) => h('span', { class: 'lg static' }, shapeGlyph(shapes[i % shapes.length]), h('span', { class: 't', text: `KR${k}` }))),
+      cap ? h('span', { class: 'lg static' }, capGlyph(), h('span', { class: 't', text: 'Punkt = μΔ, Balken = μΔ ± 3σΔ, dünner Strich = Min…Max' }))
+        : h('span', { class: 'lg static' }, h('span', { class: 't', text: 'Strich = Δ Min…Max, Punkt = Δ der Mittel' })),
       h('span', { class: 'lg static' }, glyph('band'), h('span', { class: 't', text: `Grenzen ${fmtN(o.bcdLim[0])}…${fmtN(o.bcdLim[1])} µm` })));
     const spProf = new Map(cell.s.summary.bcd.profile.map((p) => [p.gang, p]));
     const nuProf = new Map(cell.n.summary.bcd.profile.filter((p) => p.kr != null).map((p) => [p.kr, p]));
@@ -2669,10 +2842,11 @@ globalThis.SubCore = (function () {
           const it = itemAt.get(v.gang + '|' + k);
           if (!v.krs.includes(k)) return h('td', { class: 'num muted', title: 'KR läuft nicht über diesen Gang', text: '·' });
           if (!it) return h('td', { class: 'num muted', text: '–' });
+          if (cap) return h('td', { class: 'num', title: capItemText(it) }, h('span', { class: 'cl', style: 'justify-content:flex-end' }, stIcon(it.status), cpkPair(it.cap), capMarks(it)));
           return h('td', { class: 'num', title: ST_LABEL[it.status] }, h('span', { class: 'cl', style: 'justify-content:flex-end' }, stIcon(it.status), rngB(it)));
         })))),
       h('tfoot', null, h('tr', null, h('td', { text: `Mutter ${fitL} x̄` }), h('td'), g.krs.map((k) => h('td', { class: 'num', text: d4(nuProf.get(k)?.[o.fit]?.stats) }))))));
-    const leadTable = h('div', { class: 'scroll' }, h('table', null,
+    const leadTable = cap ? capLeadTable(cell) : h('div', { class: 'scroll' }, h('table', null,
       h('thead', null, h('tr', null, ['Mutter', 'Spindel', 'Mutter L min…max', 'Spindel L min…max', 'Δ [µm]', 'Reserve', 'Status'].map((t, i) => h('th', { class: i >= 2 ? 'num' : null, text: t })))),
       h('tbody', null, cell.lead.items.length ? cell.lead.items.map((it) => h('tr', null,
         h('td', { text: `${winLabel(it.nutChar)} (${fmt(it.nutChar.nominal, 1)} mm)` }),
@@ -2682,13 +2856,72 @@ globalThis.SubCore = (function () {
         h('td', { class: 'num', text: rngL(it) }),
         h('td', { class: 'num', text: fmtRes(it.reserve) }),
         h('td', null, h('span', { class: 'cl' }, stIcon(it.status), ST_LABEL[it.status])))) : h('tr', null, h('td', { colspan: 7, class: 'muted', text: 'Keine vergleichbaren Steigungsfenster.' })))));
-    det.replaceChildren(head, tiles,
+    det.replaceChildren(...[head, tiles,
+      flagNotes.length ? h('ul', { class: 'hintlist' }, flagNotes.map((t) => h('li', { text: t }))) : null,
       h('div', null, h('div', { class: 'chart-title' }, h('h3', { text: `ΔBCD je Spindelgang (${fitL})` }), h('span', { class: 'muted', text: 'je sichtbarer Kugelrille, Mutter − Spindel in µm' })), legend, box),
-      h('div', { class: 'duo-eq', style: 'margin-top:1rem' },
-        h('div', null, h('div', { class: 'h3row' }, h('h3', { text: 'BCD: Spindelgang × Kugelrille' })), bcdTable,
+      h('div', { class: cap ? null : 'duo-eq', style: 'margin-top:1rem' },
+        h('div', null, h('div', { class: 'h3row' }, h('h3', { text: 'BCD: Spindelgang × Kugelrille' }), cap ? h('span', { class: 'muted', text: 'Cpk_Δ (untere 95-%-Grenze) je Ort · Tooltip = Rechenweg' }) : null), bcdTable,
           h('p', { class: 'note', text: '· = KR läuft nicht über diesen Gang (siehe Sichtbarkeit).' })),
-        h('div', null, h('div', { class: 'h3row' }, h('h3', { text: 'Steigung: Fenster gleicher Nennlänge' })), leadTable)));
+        h('div', null, h('div', { class: 'h3row' }, h('h3', { text: 'Steigung: Fenster gleicher Nennlänge' })), leadTable)),
+      cap ? capCalc(cell) : null].filter(Boolean));
     drawPairBcd(box, cell);
+  }
+
+  /** Steigungstabelle bei „Fähigkeit“. */
+  function capLeadTable(cell) {
+    const cols = ['Fenster Mutter / Spindel', 'n_M × n_S', 'Min … Max [µm]', 'μΔ [µm]', 'σΔ [µm] (Mutter / Spindel)', 'ν_Δ', 'Cpk_Δ', 'untere Grenze', 'außerhalb erwartet', 'k / N', 'Status'];
+    return h('div', { class: 'scroll' }, h('table', null,
+      h('thead', null, h('tr', null, cols.map((t, i) => h('th', { class: i >= 1 && i <= 9 ? 'num' : null, text: t })))),
+      h('tbody', null, cell.lead.items.length ? cell.lead.items.map((it) => {
+        const c = it.cap;
+        return h('tr', { title: capItemText(it) },
+          h('td', { text: `${winLabel(it.nutChar)} (${fmt(it.nutChar.nominal, 1)} mm) / ${winLabel(it.spChar)}` }),
+          h('td', { class: 'num', text: `${it.nutStats.n} × ${it.spStats.n}` }),
+          h('td', { class: 'num', text: rng(it.mm.lo, it.mm.hi, pair.pm.opts.leadLim) }),
+          h('td', { class: 'num', text: c ? fmtS(c.mu, 1) : '–' }),
+          h('td', { class: 'num', text: c ? `${fmt(c.sd, 2)} (${fmt(c.sM, 2)} ${SRC_L[c.srcM]} / ${fmt(c.sS, 2)} ${SRC_L[c.srcS]})` : '–' }),
+          h('td', { class: 'num', text: c ? fmtNu(c.nu) : '–' }),
+          h('td', { class: 'num', text: c ? fmtCpk(c.cpk) : '–' }),
+          h('td', { class: 'num', text: c ? fmtCpk(c.cpkLo) : '–' }),
+          h('td', { class: 'num', text: c ? fmtP(c.pPred) : '–' }),
+          h('td', { class: 'num', text: c ? `${c.kOut} / ${c.N}` : '–' }),
+          h('td', null, h('span', { class: 'cl' }, stIcon(it.status), ST_LABEL_CAP[it.status], capMarks(it))));
+      }) : h('tr', null, h('td', { colspan: cols.length, class: 'muted', text: 'Keine vergleichbaren Steigungsfenster.' })))));
+  }
+
+  /** Aufklappbarer Rechenweg: die 5 maßgeblichsten BCD-Orte und alle Steigungsfenster. */
+  function capCalc(cell) {
+    const worse = (a, b) => (C.SEVERITY[b.status] - C.SEVERITY[a.status]) || ((a.cap ? a.cap.cpk : -Infinity) - (b.cap ? b.cap.cpk : -Infinity));
+    const rows = [...cell.bcd.items].sort(worse).slice(0, 5).concat(cell.lead.items);
+    const sTxt = (c, side) => `${fmt(side === 'M' ? c.sM : c.sS, 2)} ${SRC_L[side === 'M' ? c.srcM : c.srcS]}${(side === 'M' ? c.srcM : c.srcS) === 'own' ? '' : `, ν ${fmtNu(side === 'M' ? c.dfM : c.dfS)}`}`;
+    const cols = ['Ort', 'n_M', 'n_S', 'x̄_M [mm]', 'x̄_S [mm]', 's_M [µm]', 's_S [µm]', 'μ̂ [µm]', 'σ̂_Δ [µm]', 'ν_Δ', 'ñ', 'Ĉ_L', 'Ĉ_U', 'SE_L / SE_U', 'Cpk_Δ', 'Cpk_unten', 'p prädiktiv', 'p⁰ (Punktschätzung)', 'Status'];
+    const tbl = h('div', { class: 'scroll' }, h('table', null,
+      h('thead', null, h('tr', null, cols.map((t, i) => h('th', { class: i ? 'num' : null, text: t })))),
+      h('tbody', null, rows.map((it) => {
+        const c = it.cap, mS = it.nutSpread, sS = it.spSpread;
+        if (!c) return h('tr', null, h('td', { text: C.pairLoc(it) }), h('td', { class: 'num', text: mS ? String(mS.n) : '–' }), h('td', { class: 'num', text: sS ? String(sS.n) : '–' }), h('td', { colspan: cols.length - 4, class: 'muted', text: capReason(it) }), h('td', null, h('span', { class: 'cl' }, stIcon(it.status), ST_LABEL_CAP[it.status])));
+        return h('tr', null,
+          h('td', { text: C.pairLoc(it) }), h('td', { class: 'num', text: String(c.nM) }), h('td', { class: 'num', text: String(c.nS) }),
+          h('td', { class: 'num', text: fmt(mS.mean, 5) }), h('td', { class: 'num', text: fmt(sS.mean, 5) }),
+          h('td', { class: 'num', text: sTxt(c, 'M') }), h('td', { class: 'num', text: sTxt(c, 'S') }),
+          h('td', { class: 'num', text: fmt(c.mu, 2) }), h('td', { class: 'num', text: fmt(c.sd, 3) }), h('td', { class: 'num', text: fmtNu(c.nu) }), h('td', { class: 'num', text: fmt(c.nEff, 2) }),
+          h('td', { class: 'num', text: fmt(c.cpkL, 3) }), h('td', { class: 'num', text: fmt(c.cpkU, 3) }), h('td', { class: 'num', text: `${fmt(c.seL, 3)} / ${fmt(c.seU, 3)}` }),
+          h('td', { class: 'num', text: fmtCpk(c.cpk) }), h('td', { class: 'num', text: fmtCpk(c.cpkLo) }), h('td', { class: 'num', text: fmtP(c.pPred) }), h('td', { class: 'num', text: fmtP(c.pPlug) }),
+          h('td', null, h('span', { class: 'cl' }, stIcon(it.status), ST_LABEL_CAP[it.status])));
+      }))));
+    const z = fmt(C.normInv(C.CAP.conf), 3);
+    const f = [
+      'μ̂ = x̄_M − x̄_S · σ̂_Δ = √(s_M² + s_S²) · ν_Δ = σ̂_Δ⁴ / (s_M⁴/ν_M + s_S⁴/ν_S) (Welch-Satterthwaite) · ñ = σ̂_Δ² / (s_M²/n_M + s_S²/n_S)',
+      `Ĉ_L = (μ̂ − L) / (3σ̂_Δ), Ĉ_U = (U − μ̂) / (3σ̂_Δ), Cpk_Δ = min(Ĉ_L, Ĉ_U) · SE = √(1/(9ñ) + Ĉ²/(2ν_Δ)) · Cpk_unten = min(Ĉ − ${z}·SE) (Delta-Methode, Näherung; simuliert Überdeckung 0,93–0,95)`,
+      'p prädiktiv = T_ν((L − μ̂)/σ_p) + T_ν((μ̂ − U)/σ_p) mit σ_p = σ̂_Δ·√(1 + 1/ñ), t-Verteilung mit ν = ν_Δ – enthält die Schätzunsicherheit, nur Größenordnung · p⁰ = Φ(−3Ĉ_L) + Φ(−3Ĉ_U)',
+      'Streuung je Auftrag (ν = n − 1), mindestens Auflösung/√12 · Aufträge mit weniger als 3 Teilen übernehmen die gepoolte Streuung der übrigen einbezogenen Aufträge, ν = min(d̂₀ nach Smyth, Σν) · unter 3 Aufträgen mit eigener Streuung: keine Daten',
+      'Status: außerhalb bei Cpk_Δ < 1,00 · knapp bei Cpk_Δ ≥ 1,00 und Cpk_unten < 1,00 · sonst ok · Zelle = schlechtester Ort · Annahmen: zufällige Kombination in der Montage, Stichprobe vertritt den Auftrag, Normalverteilung im Auftrag',
+    ];
+    const d = h('details', { style: 'margin-top:1rem', ontoggle: (e) => { pair.calcOpen = e.target.open; } },
+      h('summary', null, 'Rechenweg ', h('span', { text: '· die 5 maßgeblichsten BCD-Orte und alle Steigungsfenster' })), tbl,
+      f.map((t) => h('p', { class: 'note', text: t })));
+    d.open = !!pair.calcOpen;
+    return d;
   }
 
   function shapePath(kind, cx, cy, r) {
@@ -2703,14 +2936,21 @@ globalThis.SubCore = (function () {
     s('path', { d: shapePath(kind, 9, 6, 3.6), fill: 'var(--s1)', stroke: 'var(--surface)', 'stroke-width': 1.5 }, g);
     return g;
   }
+  function capGlyph() {
+    const g = s('svg', { width: 18, height: 12, viewBox: '0 0 18 12', 'aria-hidden': 'true', class: 'glyph' });
+    s('line', { x1: 9, x2: 9, y1: 0, y2: 12, stroke: 'var(--muted)', 'stroke-width': 1 }, g);
+    s('line', { x1: 9, x2: 9, y1: 2.5, y2: 9.5, stroke: 'var(--s1)', 'stroke-width': 4, 'stroke-opacity': 0.45 }, g);
+    s('circle', { cx: 9, cy: 6, r: 2.6, fill: 'var(--s1)', stroke: 'var(--surface)', 'stroke-width': 1.2 }, g);
+    return g;
+  }
 
   function drawPairBcd(host, cell) {
-    const pm = pair.pm, o = pm.opts, g = pm.geo;
+    const pm = pair.pm, o = pm.opts, g = pm.geo, cap = o.basis === 'cap';
     const items = cell.bcd.items;
     if (!items.length) { host.replaceChildren(h('p', { class: 'empty', text: 'Keine BCD-Werte für dieses Paar.' })); return; }
     const gangs = g.visibility.map((v) => v.gang);
     const ys = [o.bcdLim[0], o.bcdLim[1]];
-    for (const it of items) ys.push(it.lo, it.hi);
+    for (const it of items) { ys.push(it.mm.lo, it.mm.hi); if (cap && it.cap) ys.push(it.cap.lo, it.cap.hi); }
     const yd = niceDomain(ys, 7), dd = decimalsForStep(yd.step);
     const f = frame(host, {
       height: chartHeight(300), x: [Math.min(...gangs) - 0.7, Math.max(...gangs) + 0.7], y: yd.domain, yTicks: yd.ticks, yFmt: (v) => fmt(v, dd),
@@ -2725,10 +2965,17 @@ globalThis.SubCore = (function () {
     }
     const shapes = ['circle', 'up', 'square', 'diamond'];
     const nK = g.krs.length, step = Math.min(0.17, 0.7 / Math.max(1, nK));
+    const colOf = (st) => (st === 'out' ? 'var(--crit)' : 'var(--s1)');
     for (const it of items) {
       const i = g.krs.indexOf(it.kr);
       const X = f.x(it.gang + (i - (nK - 1) / 2) * step);
-      const col = it.status === 'out' ? 'var(--crit)' : 'var(--s1)';
+      const col = colOf(it.status);
+      if (cap) {
+        s('line', { x1: X, x2: X, y1: f.y(it.mm.lo), y2: f.y(it.mm.hi), stroke: 'var(--muted)', 'stroke-width': 1 * k }, P);
+        if (it.cap) s('line', { x1: X, x2: X, y1: f.y(it.cap.lo), y2: f.y(it.cap.hi), stroke: col, 'stroke-width': 5 * k, 'stroke-opacity': 0.4 }, P);
+        s('path', { d: shapePath(shapes[i % shapes.length], X, f.y(it.cap ? it.cap.mu : it.mid), 4 * k), fill: it.cap ? col : 'var(--muted)', stroke: 'var(--surface)', 'stroke-width': 1.5 }, P);
+        continue;
+      }
       if (Math.abs(it.hi - it.lo) > 1e-9) {
         s('line', { x1: X, x2: X, y1: f.y(it.lo), y2: f.y(it.hi), stroke: col, 'stroke-width': 1.5 * k }, P);
         for (const v of [it.lo, it.hi]) s('line', { x1: X - 3 * k, x2: X + 3 * k, y1: f.y(v), y2: f.y(v), stroke: col, 'stroke-width': 1.5 * k }, P);
@@ -2739,7 +2986,10 @@ globalThis.SubCore = (function () {
     const pts = gangs.filter((x) => byGang.get(x).length);
     crosshair(f, pts.map((x) => ({ x: f.x(x) })), (idx) => {
       const x = pts[idx];
-      return tipBox(`Spindelgang ${x}`, byGang.get(x).map((it) => ({ key: 'gauss', value: `${rngB(it)} µm`, label: `KR${it.kr} · ${ST_LABEL[it.status]} · Reserve ${fmtRes(it.reserve)}` })),
+      const rows = byGang.get(x).map((it) => (cap
+        ? { key: 'gauss', value: cpkPair(it.cap), label: `KR${it.kr} · ${ST_LABEL_CAP[it.status]}${it.cap ? ` · μΔ ${fmt(it.cap.mu, 1)}, ± 3σΔ ${rng(it.cap.lo, it.cap.hi, o.bcdLim)} · Min/Max ${rng(it.mm.lo, it.mm.hi, o.bcdLim)}` : ' · Streuung nicht schätzbar'}` }
+        : { key: 'gauss', value: `${rngB(it)} µm`, label: `KR${it.kr} · ${ST_LABEL[it.status]} · Reserve ${fmtRes(it.reserve)}` }));
+      return tipBox(`Spindelgang ${x}${cap ? ' · Cpk_Δ (untere Grenze)' : ''}`, rows,
         `Spindel ${fitLabel(o)} x̄ ${fmt(byGang.get(x)[0].sp.stats.mean, 4)} mm · Grenzen ${fmtN(o.bcdLim[0])}…${fmtN(o.bcdLim[1])} µm`);
     });
   }
