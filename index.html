@@ -186,7 +186,7 @@ td.vis{text-align:center}
 .pmlegend span{display:inline-flex;gap:.4rem;align-items:center}
 .mks{display:inline-flex;gap:.15rem;margin-left:.1rem}
 .mk{display:inline-block;padding:0 .22rem;border-radius:.3rem;background:var(--surface2);border:1px solid var(--border);color:var(--text2);font-size:.72rem;line-height:1.3;font-variant-numeric:normal}
-table.pm .cl{flex-wrap:wrap;row-gap:0}
+table.pm td.cap .cl{flex-wrap:wrap;row-gap:0}
 .cl-main{display:inline-flex;align-items:center;gap:.35rem;white-space:nowrap}
 details.hints{margin:0 0 1rem;padding:.5rem .7rem;border-radius:.57rem;background:var(--surface2)}
 details.hints ul,.hintlist{margin:.2rem 0 0;padding-left:1.2rem;font-size:.9rem;color:var(--text2)}
@@ -713,7 +713,7 @@ globalThis.SubCore = (function () {
           reimport.get(m.order).push(m.sampleNo);
           continue;
         }
-        if (kept.length) issues.add('warn', 'uuid-remeasure', 'Teil mehrfach gemessen mit abweichenden Werten (Nachmessung?) – alle Messungen werden ausgewertet', `${m.order}: Teil ${uuid.slice(0, 8)}…, Stichprobe ${kept.map((u) => u.m.sampleNo).join(', ')} und ${m.sampleNo}`);
+        if (kept.length) issues.add('warn', 'uuid-remeasure', 'Teil mehrfach gemessen mit abweichenden Werten (Nachmessung?) – alle Messungen werden ausgewertet; bei der Paarungsbewertung „Fähigkeit“ zählt das Teil einmal (Mittel seiner Messungen)', `${m.order}: Teil ${uuid.slice(0, 8)}…, Stichprobe ${kept.map((u) => u.m.sampleNo).join(', ')} und ${m.sampleNo}`);
         kept.push({ m, vals });
       }
     }
@@ -1164,7 +1164,7 @@ globalThis.SubCore = (function () {
   const PAIR_DEFAULTS = { fit: 'gauss', basis: 'minmax', bcdLim: [15, 85], leadLim: [-25, 25], warnReserve: 5, krOffset: null, strokeFrom: null, strokeTo: null };
 
   // ------------------------------------------------- Paarungsfähigkeit Cpk_Δ (Bewertung „Fähigkeit“)
-  // Vorgaben (CLAUDE.md, docs/entwurf-faehigkeit.md): Streuung je Auftrag; Aufträge mit < 3 Werten übernehmen die gepoolte
+  // Vorgaben (CLAUDE.md, docs/entwurf-faehigkeit.md): Streuung je Auftrag; Aufträge mit < 3 Teilen übernehmen die gepoolte
   // Streuung der übrigen (ν nach Smyth); untere 95-%-Grenze über Welch-Satterthwaite und Delta-Methode;
   // Status „Variante b“: außerhalb bei Cpk_Δ < 1,00, knapp bei Cpk_Δ ≥ 1,00 und unterer Grenze < 1,00, sonst ok.
   const CAP = { min: 1, conf: 0.95, minN: 3, minGroups: 3, alpha: 0.01 };
@@ -1352,14 +1352,17 @@ globalThis.SubCore = (function () {
    * ganze gemessene Gewinde → Gang g sieht KR k, wenn KR1 dabei zwischen Hub-Anfang und Hub-Ende steht.
    * Beispiel 17 Gänge, 4 KR: Gang 1 → KR1, Gang 3 → KR1–3, Gang 16 → KR3–4, Gang 17 → KR4.
    */
-  function pairingGeometry(spDs, nuDs, o) {
-    const spGangs = [...new Set(spDs.chars.filter((c) => c.cls.group === 'bcd' && c.cls.gang != null).map((c) => c.cls.gang))].sort((a, b) => a - b);
-    const spLead = spDs.chars.filter((c) => c.cls.group === 'lead' && c.cls.from != null && c.nominal > 0);
+  function pairingGeometry(spDs, nuDs, o, spHas, nuHas) {
+    // spHas/nuHas (optional): nur Merkmale mit Werten in einbezogenen Aufträgen – ein Merkmal, das nur ein ausgeschlossener
+    // Auftrag hat, darf weder die Sichtbarkeit noch die Orte der Matrix bestimmen
+    const spChars = spHas ? spDs.chars.filter(spHas) : spDs.chars, nuChars = nuHas ? nuDs.chars.filter(nuHas) : nuDs.chars;
+    const spGangs = [...new Set(spChars.filter((c) => c.cls.group === 'bcd' && c.cls.gang != null).map((c) => c.cls.gang))].sort((a, b) => a - b);
+    const spLead = spChars.filter((c) => c.cls.group === 'lead' && c.cls.from != null && c.nominal > 0);
     const bounds = [...spGangs, ...spLead.flatMap((c) => [c.cls.from, c.cls.to])];
     const gMin = bounds.length ? Math.min(...bounds) : 1, gMax = bounds.length ? Math.max(...bounds) : 1;
     const krs = [...new Set([
-      ...nuDs.chars.filter((c) => c.cls.group === 'bcd' && c.cls.kr != null).map((c) => c.cls.kr),
-      ...nuDs.chars.filter((c) => c.cls.group === 'lead' && c.cls.fromKr != null).flatMap((c) => [c.cls.fromKr, c.cls.toKr]),
+      ...nuChars.filter((c) => c.cls.group === 'bcd' && c.cls.kr != null).map((c) => c.cls.kr),
+      ...nuChars.filter((c) => c.cls.group === 'lead' && c.cls.fromKr != null).flatMap((c) => [c.cls.fromKr, c.cls.toKr]),
     ])].sort((a, b) => a - b);
     const off = new Map(krs.map((k, i) => {
       const v = o.krOffset && o.krOffset[k] != null && isFinite(o.krOffset[k]) ? Number(o.krOffset[k]) : i;
@@ -1373,7 +1376,7 @@ globalThis.SubCore = (function () {
     const strokeTo = o.strokeTo != null && isFinite(o.strokeTo) ? Number(o.strokeTo) : gMax - relMax;
     const sees = (g, k) => { const s = g - rel(k); return s >= strokeFrom - EPS && s <= strokeTo + EPS; };
     const visibility = spGangs.map((g) => ({ gang: g, krs: krs.filter((k) => sees(g, k)) }));
-    const nuLead = nuDs.chars.filter((c) => c.cls.group === 'lead' && c.cls.from != null && c.nominal > 0);
+    const nuLead = nuChars.filter((c) => c.cls.group === 'lead' && c.cls.from != null && c.nominal > 0);
     // verglichen werden Fenster gleicher Nennlänge (Mutter KR1–KR4 17,4 mm ↔ Spindel G1–G7 … 17,4 mm)
     const leadPairs = nuLead.map((n) => ({ nut: n, sp: spLead.filter((s) => Math.abs(s.nominal - n.nominal) < 1e-9) }));
     return { spGangs, krs, off, gMin, gMax, strokeFrom, strokeTo, visibility, leadPairs, spLead, nuLead, sees };
@@ -1403,7 +1406,8 @@ globalThis.SubCore = (function () {
     const o = Object.assign({}, PAIR_DEFAULTS, opts || {});
     if (!PAIR_BASES.includes(o.basis)) o.basis = PAIR_DEFAULTS.basis;
     const cap = o.basis === 'cap';
-    const geo = pairingGeometry(sp.ds, nu.ds, o);
+    const spHas = (c) => sp.res.pooled.chars.has(c.position), nuHas = (c) => nu.res.pooled.chars.has(c.position);
+    const geo = pairingGeometry(sp.ds, nu.ds, o, spHas, nuHas);
     const [bLo, bHi] = o.bcdLim, [lLo, lHi] = o.leadLim;
     const um = (x) => x * 1000;
     const spread = cap ? { sp: spreadTable(sp.ds, sp.res), nu: spreadTable(nu.ds, nu.res) } : null;
@@ -1436,7 +1440,7 @@ globalThis.SubCore = (function () {
         if (!worst || it.reserve < worst.reserve) worst = it;
       }
       const nNa = items.filter((i) => i.status === 'na').length;
-      if (!worst) return { items, lo: null, hi: null, reserve: null, status: 'na', nOut: 0, nWarn: 0, nNa, worst: items[0], score: null };
+      if (!worst) return { items, lo: null, hi: null, reserve: null, status: 'na', nOut: 0, nWarn: 0, nNa, worst: null, score: null };
       const reserve = worst.reserve, st = statusOf(reserve);
       // wie bei der Fähigkeit: außerhalb > keine Daten > knapp > ok
       return { items, lo, hi, reserve, status: st === 'out' ? 'out' : nNa ? 'na' : st, nOut: items.filter((i) => i.status === 'out').length, nWarn: items.filter((i) => i.status === 'warn').length, nNa, worst, score: reserve };
@@ -1447,8 +1451,8 @@ globalThis.SubCore = (function () {
       Object.assign(it, { mm: null, lo: null, hi: null, mid: null, missing: [!hasN && 'Mutter', !hasS && 'Spindel'].filter(Boolean) });
       return withCap(it, nuPos, spPos, un.id, us.id, L, H);
     };
-    const spBcdChar = new Map(sp.ds.chars.filter((c) => c.cls.group === 'bcd' && c.cls.gang != null && c.cls.fit === o.fit).map((c) => [c.cls.gang, c]));
-    const nuBcdChar = new Map(nu.ds.chars.filter((c) => c.cls.group === 'bcd' && c.cls.kr != null && c.cls.fit === o.fit).map((c) => [c.cls.kr, c]));
+    const spBcdChar = new Map(sp.ds.chars.filter((c) => c.cls.group === 'bcd' && c.cls.gang != null && c.cls.fit === o.fit && spHas(c)).map((c) => [c.cls.gang, c]));
+    const nuBcdChar = new Map(nu.ds.chars.filter((c) => c.cls.group === 'bcd' && c.cls.kr != null && c.cls.fit === o.fit && nuHas(c)).map((c) => [c.cls.kr, c]));
     const spU = sp.res.order.map((x) => sp.res.units.get(x)).filter((u) => u.included);
     const nuU = nu.res.order.map((x) => nu.res.units.get(x)).filter((u) => u.included);
     const cells = new Map();
@@ -1467,9 +1471,10 @@ globalThis.SubCore = (function () {
             const nc = nuBcdChar.get(k);
             if (!nc) continue;
             const a = nuProf.get(k) && nuProf.get(k)[o.fit];
-            if (!a || !b) { bcd.push(missingItem({ gang: v.gang, kr: k, nut: a || null, sp: b || null }, nc.position, sc.position, un, us, !!a, !!b, bLo, bHi)); continue; }
+            const nPos = a ? a.char.position : nc.position, sPos = b ? b.char.position : sc.position;
+            if (!a || !b) { bcd.push(missingItem({ gang: v.gang, kr: k, nut: a || null, sp: b || null }, nPos, sPos, un, us, !!a, !!b, bLo, bHi)); continue; }
             const it = Object.assign({ gang: v.gang, kr: k, nut: a, sp: b }, base(a.stats, b.stats));
-            bcd.push(withCap(it, nc.position, sc.position, un.id, us.id, bLo, bHi));
+            bcd.push(withCap(it, nPos, sPos, un.id, us.id, bLo, bHi));
           }
         }
         const lead = [];
@@ -1663,6 +1668,10 @@ globalThis.SubCore = (function () {
     const lim = (v) => Array.isArray(v) && v.length === 2 && v.every((x) => typeof x === 'number' && isFinite(x)) && v[0] < v[1];
     if (!lim(o.bcdLim)) o.bcdLim = D.bcdLim.slice();
     if (!lim(o.leadLim)) o.leadLim = D.leadLim.slice();
+    const r3 = (v) => Math.round(v * 1000) / 1000; // Eingabe erlaubt höchstens 3 Nachkommastellen; ältere gespeicherte Werte angleichen
+    o.bcdLim = o.bcdLim.map(r3); o.leadLim = o.leadLim.map(r3);
+    if (!(o.bcdLim[0] < o.bcdLim[1])) o.bcdLim = D.bcdLim.slice();
+    if (!(o.leadLim[0] < o.leadLim[1])) o.leadLim = D.leadLim.slice();
     if (!(typeof o.warnReserve === 'number' && o.warnReserve >= 0)) o.warnReserve = D.warnReserve;
     return o;
   }
@@ -2631,7 +2640,7 @@ globalThis.SubCore = (function () {
     return m.length ? h('span', { class: 'mks' }, m.map(([t, ti]) => h('span', { class: 'mk', title: ti, text: t }))) : null;
   }
   /** Kleinste untere Grenze mit Ort, wenn sie an einem anderen Ort liegt als am maßgeblichen (Entwurf 2.4). */
-  const loMinText = (a) => (a.minLoAt && a.worst && a.minLoAt !== a.worst && a.worst.cap && a.cpkLoMin < a.worst.cap.cpkLo ? `kleinste untere Grenze ${fmtCpk(a.cpkLoMin)} an ${C.pairLoc(a.minLoAt)}` : null);
+  const loMinText = (a) => (a.minLoAt && a.worst && a.minLoAt !== a.worst && (!a.worst.cap || a.cpkLoMin < a.worst.cap.cpkLo) ? `kleinste untere Grenze ${fmtCpk(a.cpkLoMin)} an ${C.pairLoc(a.minLoAt)}` : null);
   /** Zusammenfassung eines Kriteriums über alle Orte (Fähigkeit). */
   function capAggText(a) {
     if (!a.items.length) return 'keine vergleichbaren Werte';
@@ -2866,6 +2875,7 @@ globalThis.SubCore = (function () {
       const d = [`${ST_LABEL_CAP[a.status]} · maßgeblich ${C.pairLoc(w)}`];
       if (c) d.push(`μΔ ${fmt(c.mu, 1)} µm, ± 3σΔ ${rng(c.lo, c.hi, capLim(w))} µm`, `außerhalb erwartet ≈ ${fmtP(c.pPred)}`, `${c.kOut} von ${c.N} Kombinationen außerhalb`);
       else d.push(capReason(w));
+      if (a.minAt && a.minAt !== w) d.push(`kleinster Cpk_Δ ${fmtCpk(a.cpkMin)} an ${C.pairLoc(a.minAt)}`);
       if (loMinText(a)) d.push(loMinText(a));
       if (a.items.length > 1 && a.pMax != null) d.push(`mind. ein Ort außerhalb ≈ ${fmtP(a.pMax)} … ${fmtP(a.pSum)}`);
       return tile(lab, c ? `Cpk_Δ ${cpkPair(c)}` : '–', d.join(' · '), a.status === 'out');
@@ -2950,12 +2960,14 @@ globalThis.SubCore = (function () {
   /** Aufklappbarer Rechenweg: die 5 maßgeblichsten BCD-Orte und alle Steigungsfenster. */
   function capCalc(cell) {
     const worse = (a, b) => (C.SEVERITY[b.status] - C.SEVERITY[a.status]) || ((a.cap ? a.cap.cpk : -Infinity) - (b.cap ? b.cap.cpk : -Infinity));
-    const rows = [...cell.bcd.items].sort(worse).slice(0, 5).concat(cell.lead.items);
+    const naB = cell.bcd.items.filter((it) => !it.cap);
+    const rows = cell.bcd.items.filter((it) => it.cap).sort(worse).slice(0, 5).concat(naB.length ? [{ naGroup: naB }] : [], cell.lead.items);
     const sTxt = (c, side) => `${fmt(side === 'M' ? c.sM : c.sS, 2)} ${SRC_L[side === 'M' ? c.srcM : c.srcS]}${(side === 'M' ? c.srcM : c.srcS) === 'own' ? '' : `, ν ${fmtNu(side === 'M' ? c.dfM : c.dfS)}`}`;
     const cols = ['Ort', 'n_M', 'n_S', 'x̄_M [mm]', 'x̄_S [mm]', 's_M [µm]', 's_S [µm]', 'μ̂ [µm]', 'σ̂_Δ [µm]', 'ν_Δ', 'ñ', 'Ĉ_L', 'Ĉ_U', 'SE_L / SE_U', 'Cpk_Δ', 'Cpk_unten', 'p prädiktiv', 'p⁰ (Punktschätzung)', 'Status'];
     const tbl = h('div', { class: 'scroll' }, h('table', null,
       h('thead', null, h('tr', null, cols.map((t, i) => h('th', { class: i ? 'num' : null, text: t })))),
       h('tbody', null, rows.map((it) => {
+        if (it.naGroup) return h('tr', null, h('td', { text: `${it.naGroup.length} BCD-${it.naGroup.length === 1 ? 'Ort' : 'Orte'} ohne Daten` }), h('td', { colspan: cols.length - 2, class: 'muted', text: [...new Set(it.naGroup.map(capReason))].join(' · ') + ' – ' + it.naGroup.map(C.pairLoc).join(', ') }), h('td', null, h('span', { class: 'cl' }, stIcon('na'), ST_LABEL_CAP.na)));
         const c = it.cap, mS = it.nutSpread, sS = it.spSpread;
         if (!c) return h('tr', null, h('td', { text: C.pairLoc(it) }), h('td', { class: 'num', text: mS ? String(mS.n) : '–' }), h('td', { class: 'num', text: sS ? String(sS.n) : '–' }), h('td', { colspan: cols.length - 4, class: 'muted', text: capReason(it) }), h('td', null, h('span', { class: 'cl' }, stIcon(it.status), ST_LABEL_CAP[it.status])));
         return h('tr', null,
@@ -2976,7 +2988,7 @@ globalThis.SubCore = (function () {
       'Status: außerhalb bei Cpk_Δ < 1,00 · knapp bei Cpk_Δ ≥ 1,00 und Cpk_unten < 1,00 · sonst ok · Zelle = schlechtester Ort · Annahmen: zufällige Kombination in der Montage, Stichprobe vertritt den Auftrag, Normalverteilung im Auftrag',
     ];
     const d = h('details', { style: 'margin-top:1rem', ontoggle: (e) => { pair.calcOpen = e.target.open; } },
-      h('summary', null, 'Rechenweg ', h('span', { text: '· die 5 maßgeblichsten BCD-Orte und alle Steigungsfenster' })), tbl,
+      h('summary', null, 'Rechenweg ', h('span', { text: '· die 5 maßgeblichsten bewerteten BCD-Orte, Orte ohne Daten und alle Steigungsfenster' })), tbl,
       f.map((t) => h('p', { class: 'note', text: t })));
     d.open = !!pair.calcOpen;
     return d;

@@ -926,6 +926,89 @@ test('Rundung: ppm ohne Exponent und Gleitkomma-Reste, p-Werte nie auf die Schwe
     assert.ok(!/p 0,01\)/.test(r), 'kein markierter p-Wert als 0,01');
   }
 });
+const spLines = syn.text.trim().split('\n');
+const SPH = C.parseCSV(spLines[0], ';').rows[0];
+const quoteRow = (c) => c.map((v) => (v === 'NA' || /^-?[\d.]+(e-?\d+)?$/i.test(v) || /^\d{4}-\d\d-\d\d /.test(v) || v === 'TRUE' || v === 'FALSE' ? v : `"${v.replace(/"/g, '""')}"`)).join(';');
+function rebuildSp(fn) { // Zeilen der Spindel-Datei gezielt verändern bzw. ergänzen (fn liefert null, eine Zeile oder mehrere)
+  const out = [spLines[0]];
+  for (let i = 1; i < spLines.length; i++) { const r = fn(C.parseCSV(spLines[i], ';').rows[0]); if (r === null) continue; for (const row of Array.isArray(r[0]) ? r : [r]) out.push(quoteRow(row)); }
+  return out.join('\n');
+}
+const scol = (n) => SPH.indexOf(n);
+const cellStates = (pm) => [...pm.cells.values()].map((c) => `${c.key}:${c.bcd.status}/${c.lead.status}/${c.bcd.items.length}/${c.lead.items.length}`).join(' ');
+test('Merkmal nur in einem ausgeschlossenen Auftrag ändert weder Sichtbarkeit noch Matrix (2. Review)', () => {
+  const t = rebuildSp((c) => {
+    if (c[scol('strSAPOrder')] !== '90010001' || c[scol('strPosition')] !== '432.03.GG') return c;
+    const x = c.slice(); x[scol('strPosition')] = '432.05.GG'; x[scol('strRemark')] = 'BCD GG Gang 5';
+    return [c, x];
+  });
+  const d2 = C.buildModel([C.parseCAQ(t, 'gang5.csv')], 'spindel').datasets[0];
+  assert.ok(d2.charMap.has('432.05.GG'), 'Testaufbau: Gang 5 nur im ersten Auftrag');
+  const inc = new Set(d2.batches.map((b) => b.order)); inc.delete('90010001');
+  const incBase = new Set(ds.batches.map((b) => b.order)); incBase.delete('90010001');
+  for (const basis of ['minmax', 'cap']) {
+    const a = C.pairing({ ds: d2, res: C.characterize(d2, inc) }, nuPair, { basis });
+    const b = C.pairing({ ds, res: C.characterize(ds, incBase) }, nuPair, { basis });
+    assert.strictEqual(a.counts.bcdNa, 0, basis);
+    same(a.geo.visibility, b.geo.visibility);
+    assert.strictEqual(cellStates(a), cellStates(b), basis);
+  }
+  // Gang 3 ist über Gauss sichtbar; Hüll an Gang 3 gibt es nur im ausgeschlossenen Auftrag → kein Ort „keine Daten“ bei Hüll
+  const t3 = rebuildSp((c) => {
+    if (c[scol('strSAPOrder')] !== '90010001' || c[scol('strPosition')] !== '432.02.GN') return c;
+    const x = c.slice(); x[scol('strPosition')] = '432.03.GN'; x[scol('strRemark')] = 'BCD GN Gang 3';
+    return [c, x];
+  });
+  const d3 = C.buildModel([C.parseCAQ(t3, 'huell3.csv')], 'spindel').datasets[0];
+  assert.ok(d3.charMap.has('432.03.GN'), 'Testaufbau: Hüll an Gang 3 nur im ersten Auftrag');
+  const inc3 = new Set(d3.batches.map((b) => b.order)); inc3.delete('90010001');
+  for (const basis of ['minmax', 'cap']) {
+    const a = C.pairing({ ds: d3, res: C.characterize(d3, inc3) }, nuPair, { basis, fit: 'huell' });
+    const b = C.pairing({ ds, res: C.characterize(ds, incBase) }, nuPair, { basis, fit: 'huell' });
+    assert.strictEqual(a.counts.bcdNa, 0, basis + ' Hüll');
+    assert.strictEqual(cellStates(a), cellStates(b), basis + ' Hüll');
+  }
+});
+test('Steigungsfenster nur in einem ausgeschlossenen Mutter-Auftrag wird nicht verglichen (2. Review)', () => {
+  const lines = [nutLines[0]];
+  for (let i = 1; i < nutLines.length; i++) {
+    lines.push(nutLines[i]);
+    const c = cellsOf(nutLines[i]);
+    if (c[col('strSAPOrder')] === '90020011' && c[col('strPosition')] === '748') { c[col('strPosition')] = '749'; c[col('intOrderInIP')] = '99'; lines.push(quoteRow(c)); }
+  }
+  const d2 = C.buildModel([C.parseCAQ(lines.join('\n'), '749.csv')], 'mutter').datasets[0];
+  assert.ok(d2.charMap.has('749') && d2.charMap.get('749').cls.group === 'lead', 'Testaufbau');
+  const inc = new Set(d2.batches.map((b) => b.order)); inc.delete('90020011');
+  for (const basis of ['minmax', 'cap']) {
+    const pm = C.pairing(spPair, { ds: d2, res: C.characterize(d2, inc) }, { basis });
+    assert.strictEqual(pm.counts.leadNa, 0, basis);
+    assert.ok([...pm.cells.values()].every((c) => c.lead.items.length === 3 && c.lead.items.every((it) => it.nutChar.position === '748')));
+  }
+});
+test('Prüfplan umnummeriert (zwei Positionen für Gang 9) → Fähigkeit rechnet mit der Position des Auftrags (2. Review)', () => {
+  const late = new Set(ds.batches.slice(4).map((b) => b.order));
+  const t = rebuildSp((c) => { if (c[scol('strPosition')] === '432.09.GG' && late.has(c[scol('strSAPOrder')])) c[scol('strPosition')] = '433.09.GG'; return c; });
+  const d2 = C.buildModel([C.parseCAQ(t, 'umnum.csv')], 'spindel').datasets[0];
+  assert.ok(d2.charMap.has('433.09.GG') && d2.charMap.has('432.09.GG'));
+  const pm = C.pairing({ ds: d2, res: C.characterize(d2, new Set(d2.batches.map((b) => b.order))) }, nuPair, { basis: 'cap' });
+  assert.strictEqual(pm.counts.bcdNa, 0);
+  for (const c of pm.cells.values()) for (const it of c.bcd.items.filter((x) => x.gang === 9)) {
+    assert.ok(it.cap, 'Fähigkeit gerechnet');
+    assert.strictEqual(it.spSpread.id, c.s.id);
+    near(it.spSpread.mean, it.sp.stats.mean, 1e-15, 'Streuung aus der Position des Auftrags');
+  }
+});
+test('Min/Max ganz ohne BCD-Werte eines Auftrags: keine Daten, kein Ort genannt (2. Review)', () => {
+  const t = rebuildNut((c) => (/^713\.\d\.GG$/.test(c[col('strPosition')]) && c[col('strSAPOrder')] === '90020020' ? null : c));
+  const d2 = C.buildModel([C.parseCAQ(t, 'ohneBCD.csv')], 'mutter').datasets[0];
+  const pm = C.pairing(spPair, { ds: d2, res: C.characterize(d2, new Set(d2.batches.map((b) => b.order))) }, { basis: 'minmax' });
+  const c = pm.cells.get(pm.spU[0].id + '|90020020');
+  same([c.bcd.status, c.bcd.worst, c.bcd.reserve], ['na', null, null]);
+  const rows = C.exportPairingCSV(pm, ds, d2).trim().split('\r\n'), head = rows[0].split(';');
+  const r = rows.find((x) => x.split(';')[4] === '90020020').split(';');
+  same([r[head.indexOf('BCD_Status')], r[head.indexOf('BCD_knappstes_Paar')]], ['keine Daten', '']);
+  assert.ok(pm.worstBcd && pm.worstBcd.n.id !== '90020020');
+});
 test('Überdeckung der unteren 95-%-Grenze (2000 Läufe, homogen, eigene Streuung): 0,93…0,97 (Test m)', () => {
   const g = gaussGen(20261107);
   const sM = 2, sS = 2, sd = Math.sqrt(8), trueCpk = 1.33, U = 85, mu = U - 3 * trueCpk * sd;
