@@ -304,19 +304,19 @@ test('Zylindrizität Gewinde je KR, Außen-ø als Form', () => {
   assert.strictEqual(nds.charMap.get('793').cls.group, 'cyl');
   assert.strictEqual(nds.charMap.get('743').cls.group, 'form');
 });
-test('Re-Importe: gleiche UUID + gleiche Werte → je Teil einmal gezählt', () => {
+test('Re-Importe: gleiche UUID + alle Werte gleich → Messung einmal gezählt', () => {
   const parts = Object.fromEntries(nds.batches.map((b) => [b.order, b.nParts]));
-  same([parts['90020011'], parts['90020014'], parts['90020017'], parts['90020023']], [10, 5, 1, 10]);
-  assert.strictEqual(nm.records.length, 3870);
+  same([parts['90020011'], parts['90020017'], parts['90020023']], [10, 1, 10]);
+  assert.strictEqual(nm.records.length, 81 * 45);
   const d = nIssues.find((i) => i.code === 'dup-uuid');
-  assert.strictEqual(d.count, 15);
-  for (const st of nres.pooled.chars.values()) assert.ok(st.n <= 86);
-  assert.strictEqual(nres.pooled.chars.get('713.GG').n, 86);
+  assert.strictEqual(d.count, 10);
+  assert.strictEqual(nres.pooled.chars.get('713.GG').n, 81);
 });
-test('dieselben Teile in zwei Aufträgen → Warnung, gezählt im zuerst gemessenen', () => {
+test('Teile in zwei Aufträgen sind nicht zuordenbar → ganz verworfen (Vorgabe)', () => {
   const x = nIssues.find((i) => i.code === 'dup-cross-order');
-  assert.ok(x);
-  assert.ok(/gezählt in 90020014, verworfen in 90020017/.test(x.examples[0]));
+  assert.ok(x && /5 Teil\(e\) in 90020014 \/ 90020017/.test(x.examples[0]));
+  assert.ok(!nds.batches.some((b) => b.order === '90020014'), 'Auftrag ohne verbleibende Teile entfällt');
+  assert.ok(nIssues.find((i) => i.code === 'order-empty' && /90020014/.test(i.examples[0])));
   assert.ok(nIssues.find((i) => i.code === 'few-parts'));
 });
 test('Umlaute repariert, Probe-Bemerkung lesbar', () => {
@@ -343,6 +343,157 @@ test('Export Mutter: Lage als KR', () => {
   assert.ok(rows[1].startsWith('Mutter;9990002;0200/P_TURN;'));
   assert.ok(rows.some((r) => r.includes(';713.2.GG;') && r.includes(';KR2;')));
   assert.ok(rows.some((r) => r.includes(';748;') && r.includes(';KR1-KR4;')));
+});
+
+console.log('Review-Funde (Regressionstests)');
+const nutLines = nutText.trim().split('\n');
+const NH = C.parseCSV(nutLines[0], ';').rows[0];
+const col = (n) => NH.indexOf(n);
+const cellsOf = (l) => C.parseCSV(l, ';').rows[0];
+function rebuildNut(fn) { // Zeilen der Mutter-Datei gezielt verändern
+  const out = [nutLines[0]];
+  for (let i = 1; i < nutLines.length; i++) { const c = cellsOf(nutLines[i]); const r = fn(c, i); if (r === null) continue; out.push((r || c).map((v) => (v === 'NA' || /^-?[\d.]+(e-?\d+)?$/i.test(v) || /^\d{4}-\d\d-\d\d /.test(v) || v === 'TRUE' ? v : `"${v.replace(/"/g, '""')}"`)).join(';')); }
+  return out.join('\n');
+}
+test('Umlaut-Reparatur lässt korrekte Texte wie „Ø±0,01“ in Ruhe', () => {
+  assert.strictEqual(C.fixMojibake('Aussen-Ø±0,01'), 'Aussen-Ø±0,01');
+  assert.strictEqual(C.fixMojibake('Winkel 20°±0,4'), 'Winkel 20°±0,4');
+  assert.strictEqual(C.fixMojibake('Â°'), '°');
+});
+test('Dezimalkomma mit Exponent („-8,7E-05“)', () => {
+  near(C.parseNum('-8,7E-05'), -8.7e-5, 1e-15);
+  near(C.parseNum('1,5e3'), 1500, 1e-9);
+});
+test('„NA“ in Auftrag/Charge/Bemerkung ist leer; Auftrag fällt auf strInspectionOrder zurück', () => {
+  const t = rebuildNut((c, i) => { if (i < 50) { c[col('strSAPOrder')] = 'NA'; c[col('strBatchNo')] = 'NA'; } return c; });
+  const f = C.parseCAQ(t, 'na.csv');
+  const r = f.records.find((x) => x.line < 50);
+  assert.strictEqual(r.order, r.inspOrder.split('/')[0].trim());
+  assert.strictEqual(r.batch, '');
+});
+test('Spindel- und Mutter-Zeilen in einer Datei → je Typ aufgeteilt', () => {
+  const spl = syn.text.trim().split('\n');
+  const mixed = [spl[0], ...spl.slice(1), ...nutLines.slice(1)].join('\n');
+  const parts = C.splitByPartType(C.parseCAQ(mixed, 'gemischt.csv'));
+  same(parts.map((x) => x.partType).sort(), ['mutter', 'spindel']);
+  assert.ok(parts.every((x) => /gemischt\.csv \((Spindel|Mutter)-Teil\)/.test(x.fileName)));
+  same(parts.map((x) => x.records.length).sort((a, b) => a - b), [3767, 4545].sort((a, b) => a - b));
+});
+test('Mutter nur mit dem 6-Gang-Fenster → Gangzahl unbekannt, keine falsche Steigung', () => {
+  const t = rebuildNut((c) => (['748.1', '748.2'].includes(c[col('strPosition')]) ? null : c));
+  const m2 = C.buildModel([C.parseCAQ(t, 'nur748.csv')], 'mutter');
+  const d2 = m2.datasets[0];
+  assert.ok(d2.issues.list().find((i) => i.code === 'lead-turns-unknown'));
+  const r2 = C.characterize(d2, new Set(d2.batches.map((b) => b.order)));
+  assert.strictEqual(r2.pooled.summary.lead.pitchMean, null);
+});
+test('Steigungsfenster ohne Nennmaß → Warnung', () => {
+  const t = rebuildNut((c) => { if (c[col('strPosition')] === '748.2') c[col('decNominal')] = 'NA'; return c; });
+  const d2 = C.buildModel([C.parseCAQ(t, 'nom.csv')], 'mutter').datasets[0];
+  assert.ok(d2.issues.list().find((i) => i.code === 'lead-no-nominal' && /748\.2/.test(i.examples[0])));
+});
+test('Nachmessung (gleiche UUID, andere Werte) bleibt, Datei doppelt geladen zählt nicht doppelt', () => {
+  // Re-Import einer Stichprobe mit geänderten Werten = Nachmessung
+  let k = 0;
+  const t = rebuildNut((c) => c);
+  const lines = t.split('\n');
+  const extra = [];
+  for (let i = 1; i < lines.length; i++) {
+    const c = cellsOf(lines[i]);
+    if (c[col('strSAPOrder')] === '90020020' && c[col('intSampleNo')] === '1') {
+      c[col('intSampleNo')] = '21'; c[col('intSample')] = '21'; c[col('datInspUTC')] = '2026-10-30 10:00:00';
+      c[col('value')] = String(Number(c[col('value')]) + 0.0005); k++;
+      extra.push(c.map((v) => (v === 'NA' || /^-?[\d.]+(e-?\d+)?$/i.test(v) || /^\d{4}-\d\d-\d\d /.test(v) || v === 'TRUE' ? v : `"${v}"`)).join(';'));
+    }
+  }
+  assert.strictEqual(k, 45, 'Testaufbau: eine nachgemessene Stichprobe mit 45 Werten');
+  const t2 = [...lines, ...extra].join('\n');
+  const f1 = C.parseCAQ(t2, 'a.csv'), f2 = C.parseCAQ(t2, 'b.csv');
+  const mA = C.buildModel([f1], 'mutter'), mB = C.buildModel([f1, f2], 'mutter');
+  assert.strictEqual(mA.records.length, 81 * 45 + k);
+  assert.strictEqual(mB.records.length, mA.records.length, 'zweite Kopie der Datei darf nichts hinzufügen');
+  assert.ok(mA.datasets[0].issues.list().find((i) => i.code === 'uuid-remeasure') || mA.issues.list().find((i) => i.code === 'uuid-remeasure'));
+  assert.ok(mB.issues.list().find((i) => i.code === 'dup'));
+});
+test('Überlappende Exporte: keine falsche Meldung „verworfen“, gleiche Werte', () => {
+  const half = Math.floor(nutLines.length * 0.6);
+  const a = [nutLines[0], ...nutLines.slice(1, half)].join('\n');
+  const b = [nutLines[0], ...nutLines.slice(Math.floor(nutLines.length * 0.4))].join('\n');
+  const mm = C.buildModel([C.parseCAQ(a, 'a.csv'), C.parseCAQ(b, 'b.csv')], 'mutter');
+  assert.strictEqual(mm.records.length, 81 * 45);
+  assert.strictEqual(mm.issues.list().find((i) => i.code === 'dup-uuid').count, 10);
+});
+test('Zylinder-Gauss nur, wenn in allen Aufträgen gemessen', () => {
+  const t = rebuildNut((c) => (c[col('strPosition')] === '713.GG' && c[col('strSAPOrder')] !== '90020020' ? null : c));
+  const d2 = C.buildModel([C.parseCAQ(t, 'zyl.csv')], 'mutter').datasets[0];
+  const r2 = C.characterize(d2, new Set(d2.batches.map((b) => b.order)));
+  assert.strictEqual(r2.pooled.summary.bcd.gaussFromOverall, false);
+  assert.strictEqual(r2.pooled.summary.bcd.gaussN, 81 * 4);
+});
+test('Mutter ohne KR-Texte wird an „BCD Zylinder“/„BCD Range“ erkannt', () => {
+  const t = rebuildNut((c) => (/KR/.test(c[col('strRemark')]) ? null : c));
+  assert.strictEqual(C.parseCAQ(t, 'ohneKR.csv').partType, 'mutter');
+});
+
+console.log('Paarung');
+const spPair = { ds, res: C.characterize(ds, new Set(ds.batches.map((b) => b.order))) };
+const nuPair = { ds: nds, res: nres };
+test('Sichtbarkeit (Vorgabe): Gang 1 → KR1, Gang 3 → KR1–3, Gang 16 → KR3–4, Gang 17 → KR4', () => {
+  const g = C.pairingGeometry(ds, nds, C.PAIR_DEFAULTS);
+  const v = Object.fromEntries(g.visibility.map((x) => [x.gang, x.krs]));
+  same([v[1], v[2], v[3], v[8], v[14], v[15], v[16], v[17]], [[1], [1, 2], [1, 2, 3], [1, 2, 3, 4], [1, 2, 3, 4], [2, 3, 4], [3, 4], [4]]);
+  same([g.strokeFrom, g.strokeTo], [1, 14]);
+  same(g.leadPairs.map((lp) => [lp.nut.position, lp.sp.map((x) => x.position)]), [['748', ['404.1', '404.5', '404.9']], ['748.1', []], ['748.2', []]]);
+});
+test('Sichtbarkeit einstellbar: KR-Versatz laut Prüfplan (0,1,5,6) und Hub', () => {
+  const g = C.pairingGeometry(ds, nds, Object.assign({}, C.PAIR_DEFAULTS, { krOffset: { 1: 0, 2: 1, 3: 5, 4: 6 } }));
+  same(g.visibility.find((x) => x.gang === 3).krs, [1, 2]);
+  same([g.strokeFrom, g.strokeTo], [1, 11]);
+  const g2 = C.pairingGeometry(ds, nds, Object.assign({}, C.PAIR_DEFAULTS, { strokeFrom: 5, strokeTo: 9 }));
+  same(g2.visibility.find((x) => x.gang === 3).krs, []);
+});
+test('Matrix: Δ = Mutter − Spindel aus Min/Max der Einzelwerte, je sichtbarem Paar', () => {
+  const pm = C.pairing(spPair, nuPair, C.PAIR_DEFAULTS);
+  same([pm.spU.length, pm.nuU.length, pm.cells.size], [10, 9, 90]);
+  const us = pm.spU[0], un = pm.nuU[0];
+  const cell = pm.cells.get(us.id + '|' + un.id);
+  const sG = us.chars.get('463.17.GG'), nG = un.chars.get('713.4.GG');
+  const it = cell.bcd.items.find((x) => x.gang === 17 && x.kr === 4);
+  near(it.lo, (nG.min - sG.max) * 1000, 1e-9);
+  near(it.hi, (nG.max - sG.min) * 1000, 1e-9);
+  assert.ok(!cell.bcd.items.some((x) => x.gang === 17 && x.kr !== 4), 'Gang 17 sieht nur KR4');
+  near(cell.bcd.lo, Math.min(...cell.bcd.items.map((x) => x.lo)), 1e-12);
+  const L = cell.lead.items.find((x) => x.spChar.position === '404.5');
+  near(L.lo, (un.chars.get('748').min - us.chars.get('404.5').max) * 1000, 1e-9);
+  assert.strictEqual(cell.lead.items.length, 3);
+});
+test('Mittelwerte statt Min/Max; Hüll/Pferch nur an Gängen mit Hüll/Pferch', () => {
+  const pm = C.pairing(spPair, nuPair, Object.assign({}, C.PAIR_DEFAULTS, { basis: 'mean' }));
+  const c = pm.cells.values().next().value;
+  assert.ok(c.bcd.items.every((x) => x.lo === x.hi));
+  const ph = C.pairing(spPair, nuPair, Object.assign({}, C.PAIR_DEFAULTS, { fit: 'huell' }));
+  same([...new Set(ph.cells.values().next().value.bcd.items.map((x) => x.gang))], [2, 9, 14, 16, 17]);
+});
+test('Status: außerhalb / knapp / in Grenzen nach Reserve', () => {
+  const pm = C.pairing(spPair, nuPair, Object.assign({}, C.PAIR_DEFAULTS, { bcdLim: [40, 60], warnReserve: 2 }));
+  const c = pm.cells.values().next().value;
+  assert.strictEqual(c.bcd.status, 'out');
+  assert.ok(c.bcd.reserve < 0 && c.bcd.nOut > 0);
+  const ok = C.pairing(spPair, nuPair, Object.assign({}, C.PAIR_DEFAULTS, { bcdLim: [-1000, 1000], leadLim: [-1000, 1000] }));
+  assert.ok([...ok.cells.values()].every((x) => x.status === 'ok'));
+  assert.strictEqual(ok.counts.bothOk, 90);
+});
+test('Ausgeschlossene Aufträge fehlen in der Matrix', () => {
+  const inc = new Set(ds.batches.map((b) => b.order)); inc.delete('90010001');
+  const pm = C.pairing({ ds, res: C.characterize(ds, inc) }, nuPair, C.PAIR_DEFAULTS);
+  assert.strictEqual(pm.spU.length, 9);
+});
+test('Matrix-Export: eine Zeile je Paar', () => {
+  const pm = C.pairing(spPair, nuPair, C.PAIR_DEFAULTS);
+  const rows = C.exportPairingCSV(pm, ds, nds).trim().split('\r\n');
+  assert.strictEqual(rows.length, 1 + 90);
+  assert.ok(rows[0].startsWith('Spindel_Material;Spindel_Auftrag;'));
+  assert.ok(/;Gauss;Min\/Max Einzelwerte;15;85;/.test(rows[1]));
 });
 
 // Optional: echte Exporte lokal mitprüfen (werden nie ins Repository übernommen)

@@ -6,7 +6,7 @@ Analyse von **Steigungs- und BCD-Differenzen bei Kugelgewindetrieben**. Läuft k
 |---|---|
 | 1 · Spindel charakterisieren | ✅ |
 | 2 · Mutter charakterisieren | ✅ |
-| 3 · Paarung (Differenzen Spindel ↔ Mutter je Fertigungsauftrag) | folgt |
+| 3 · Paarung (Matrix aller Spindel- × Mutter-Aufträge, ΔBCD und ΔSteigung) | ✅ |
 
 ## Benutzung
 
@@ -14,7 +14,8 @@ Analyse von **Steigungs- und BCD-Differenzen bei Kugelgewindetrieben**. Läuft k
 2. CAQ-Exporte (`.csv`) auf die Fläche ziehen, Spindel und Mutter gern gleichzeitig. Die App erkennt den Teiletyp an den Merkmalen und legt jede Datei im passenden Reiter ab (*1 · Spindel*, *2 · Mutter*). Mehrere Dateien je Teil werden zusammengeführt, doppelte Messwerte entfernt.
 3. **Einlesebericht prüfen.** Dort stehen Material, Prozess, Zeitraum, Hinweise und die *Merkmalszuordnung* (wie die App jedes Merkmal verstanden hat).
 4. Fertigungsaufträge auswählen bzw. ausschließen (Haken). Ausschlüsse merkt sich der Browser.
-5. Spindel-Steckbrief, Diagramme, Auftragsvergleich und Kennwerte ansehen und bei Bedarf als CSV exportieren (Semikolon, Dezimalkomma, für Excel).
+5. Steckbrief, Diagramme, Auftragsvergleich und Kennwerte ansehen und bei Bedarf als CSV exportieren (Semikolon, Dezimalkomma, für Excel).
+6. Reiter *3 · Paarung*: Matrix aller einbezogenen Spindel-Aufträge gegen alle einbezogenen Mutter-Aufträge. Eine Zelle anklicken, um das Paar im Detail zu sehen. Die Matrix lässt sich als CSV exportieren.
 
 Zum Ausprobieren: `testdata/synthetisch_spindel_P_HEAT.csv` und `testdata/synthetisch_mutter_P_TURN.csv`.
 
@@ -32,8 +33,11 @@ Mutter = Prüfplantexte mit Kugelrillen „KR1…KR4“, Spindel = „Gang n“ 
 
 ### Dubletten
 
-- **Mit Teile-UUID** (`strUUID`, 32 Hex-Zeichen – Mutter-Export): gleiche UUID + gleiches Merkmal + identischer Wert = Re-Import. Gezählt wird nur der zuerst gemessene Eintrag. Steht dasselbe Teil in zwei Fertigungsaufträgen, gibt es eine Warnung mit beiden Auftragsnummern. Abweichende Werte bei gleicher UUID werden beide ausgewertet und gemeldet.
-- **Ohne Teile-UUID** (Spindel; die Härteproben-IDs wie `90010008_1` sind keine Teile-IDs): gleicher Wert, gleiches Merkmal, gleiche Stichprobe, gleicher Zeitpunkt.
+1. **Exakt gleiche Zeilen**, also dieselbe Messung in mehreren Dateien oder überlappenden Exporten (gleicher Auftrag, gleiches Merkmal, gleiche Stichprobe, gleicher Zeitpunkt, gleicher Wert): Sie werden still entfernt (Hinweis).
+2. **Re-Import** (nur mit echter Teile-UUID `strUUID`, 32 Hex-Zeichen – Mutter-Export): Eine Messung (UUID + Auftrag + Stichprobe), deren Werte **alle** einer früheren Messung desselben Teils gleichen, fällt weg. Gezählt wird die zuerst gemessene. Weichen die Werte ab, gilt sie als Nachmessung. Dann bleiben beide Messungen, und es erscheint eine Warnung.
+3. **Teile in mehreren Fertigungsaufträgen** sind nicht eindeutig zuordenbar und werden ganz verworfen (Vorgabe). Bleibt ein Auftrag danach leer, entfällt er.
+
+Die Härteproben-IDs der Spindel (z. B. `90010008_1`) sind keine Teile-IDs und laufen nur durch Stufe 1.
 
 ### Merkmalszuordnung Spindel
 
@@ -69,12 +73,26 @@ Maßgeblich sind `strPosition` und `strCharTextEN`. Der Prüfplantext (`strRemar
 | Steigung zwischen Fenstern / Einzelgänge | Spanne der Fenstermittel (G1–G7, G5–G11, G9–G15) | Spanne KR1–KR2 vs. KR3–KR4 (je 1 Gang) |
 | Gewinde: Werte außerhalb Toleranz | Steigung, BCD, BCD-Kennzahlen, Zylindrizität Gewinde; die Zahl für alle Merkmale steht daneben | ebenso |
 
+## Paarung (Reiter 3)
+
+Ziel ist, im Umlauf befindliche Spindel- und Mutter-Aufträge matrixweise zu prüfen, ob irgendwo ungünstige BCD- oder Steigungsdifferenzen entstehen, und bei Bedarf gezielt zu paaren.
+
+- **Δ = Mutter − Spindel**, in µm.
+- **Bewertung (Standard: Min/Max der Einzelwerte):** Je Paar zählt der ungünstigste Fall aus den Einzelteilen, also Min Mutter − Max Spindel bis Max Mutter − Min Spindel. Umschaltbar auf die Differenz der Auftragsmittel. Eine Bewertung über die Fähigkeit ist vorgesehen, aber noch offen.
+- **BCD (Standard: Gauss, umschaltbar auf Hüll oder Pferch):** Je Spindelgang wird mit jeder Kugelrille (KR) der Mutter verglichen, die über diesen Gang läuft. Hüll und Pferch gibt es bei der Spindel nur an den Gängen 2, 9, 14, 16 und 17.
+- **Steigung:** das Mutterfenster KR1–KR4 (6 Gänge) gegen jedes Spindelfenster gleicher Gangzahl (G1–G7, G5–G11, G9–G15). Die Einzelgänge KR1–KR2 und KR3–KR4 haben auf der Spindel kein Gegenstück.
+- **Grenzen (Standard):** ΔBCD 15…85 µm, ΔSteigung ±25 µm. „Knapp“ heißt, die Reserve zur Grenze liegt unter 5 µm. Alle Werte sind einstellbar und werden im Browser gemerkt.
+- **Sichtbarkeit (Standard, Vorgabe):** KR1…KR4 liegen in aufeinanderfolgenden Gängen, die Mutter fährt über das ganze gemessene Gewinde. Bei 17 Gängen heißt das: Gang 1 sieht KR1, Gang 2 KR1–2, Gang 3 KR1–3, die Gänge 4–14 alle KR, Gang 15 KR2–4, Gang 16 KR3–4, Gang 17 KR4. KR-Versatz und Hub sind einstellbar.
+- **Offene Frage:** Laut Prüfplan der Mutter liegen KR1 und KR4 sechs Gänge auseinander (Steigung KR1–KR4 = 17,4 mm), KR1/KR2 und KR3/KR4 je einen. Das ergäbe einen KR-Versatz von 0, 1, 5 und 6 statt 0, 1, 2 und 3.
+- Ausgeschlossene Aufträge aus den Reitern Spindel und Mutter fehlen auch in der Matrix.
+
 ## Erwartetes Dateiformat
 
 CAQ-Export, eine Zeile je Messwert. Erkannt bzw. verarbeitet wird Folgendes:
 
 - Trennzeichen `;`, `,` oder Tab (automatisch); Dezimalpunkt oder Dezimalkomma
-- Kodierung UTF-8 oder Windows-1252; R-Maskierungen wie `<U+00E4>` werden zu „ä“
+- Kodierung UTF-8 oder Windows-1252; R-Maskierungen wie `<U+00E4>` werden zu „ä“, doppelt kodierte Umlaute („Ã¼“) werden repariert
+- `NA` in Textspalten (Auftrag, Charge, Bemerkung …) gilt als leer; fehlt `strSAPOrder`, wird der Auftrag aus `strInspectionOrder` genommen
 - fehlende Werte als `NA` oder leer; einseitige Toleranzen über `decLTol = NA`
 - Pflichtspalten: `strSAPOrder` (oder `strInspectionOrder`), `strCharTextEN`, `strPosition`, `value`
 - **Bitte den Original-Export verwenden, nicht eine in Excel gespeicherte Fassung.** Excel macht aus der Position `404.1` den Wert `404,1` und aus `449.10` den Wert `449,1`. Das Erste erkennt die App und warnt, das Zweite lässt sich nicht zurückrechnen.
@@ -102,7 +120,7 @@ node tools/generate-synthetic-mutter.js
 node tests/run-tests.js
 ```
 
-Geprüft wird der Kern aus `index.html` (`<script id="core">`): CSV, Kodierung, Zahlen, Teiletyp, Zuordnung Spindel und Mutter, Kennwerte, Dubletten (auch über Teile-UUID), Excel-Variante und Export. Optional lässt sich ein echter Export lokal mitprüfen, ohne dass er ins Repository gelangt:
+Geprüft wird der Kern aus `index.html` (`<script id="core">`): CSV, Kodierung, Zahlen, Teiletyp (auch gemischte Dateien), Zuordnung Spindel und Mutter, Kennwerte, Dubletten (Re-Import, Nachmessung, überlappende Exporte, Teile in zwei Aufträgen), Excel-Variante, Paarung (Sichtbarkeit, Min/Max- und Mittelwert-Differenzen, Status, Export). Jeder Fund aus dem Review hat einen eigenen Regressionstest. Optional lässt sich ein echter Export lokal mitprüfen, ohne dass er ins Repository gelangt:
 
 ```bash
 CAQ_REAL=/pfad/spindel.csv CAQ_REAL_NUT=/pfad/mutter.csv node tests/run-tests.js
