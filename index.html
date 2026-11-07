@@ -867,14 +867,17 @@ globalThis.SubCore = (function () {
   // ---------------------------------------------------------- Statistik
   const EPS = 1e-9;
   /** Kennwerte einer Werteliste. Außerhalb-Toleranz je Messwert mit dessen eigener Toleranz. */
+  /** Probe-Bemerkung → 'E' (Erststück), 'L' (Letztstück) oder null. */
+  const sampleTag = (rm) => (/^\s*erst/i.test(rm || '') ? 'E' : /^\s*letzt/i.test(rm || '') ? 'L' : null);
   function describe(recs) {
     const n = recs.length;
     if (!n) return null;
     let sum = 0, min = Infinity, max = -Infinity, below = 0, above = 0;
-    const values = new Array(n);
+    const values = new Array(n), tags = new Array(n);
     for (let i = 0; i < n; i++) {
       const r = recs[i], v = r.value;
       values[i] = v; sum += v;
+      tags[i] = sampleTag(r.sampleRemark);
       if (v < min) min = v;
       if (v > max) max = v;
       if (r.lsl != null && v < r.lsl - EPS) below++;
@@ -883,7 +886,166 @@ globalThis.SubCore = (function () {
     const mu = sum / n;
     let ss = 0;
     for (const v of values) ss += (v - mu) * (v - mu);
-    return { n, mean: mu, sd: n > 1 ? Math.sqrt(ss / (n - 1)) : null, min, max, range: max - min, below, above, values };
+    return { n, mean: mu, sd: n > 1 ? Math.sqrt(ss / (n - 1)) : null, min, max, range: max - min, below, above, values, tags };
+  }
+
+  // ------------------------------------------------- Verteilungsfunktionen (ohne Bibliotheken)
+  const LN_SQRT_PI = 0.5723649429247001; // ln Γ(1/2) = ln √π
+  const FPMIN = 1e-300, DEPS = 3e-16, MAXIT = 10000;
+  const LANCZOS = [0.99999999999980993, 676.5203681218851, -1259.1392167224028, 771.32342877765313, -176.61502916214059,
+    12.507343278686905, -0.13857109526572012, 9.9843695780195716e-6, 1.5056327351493116e-7];
+  /** ln Γ(x), Lanczos-Näherung (g = 7, 9 Koeffizienten), relativ ≈ 1e-15. */
+  function lnGamma(x) {
+    if (x < 0.5) return Math.log(Math.PI / Math.abs(Math.sin(Math.PI * x))) - lnGamma(1 - x);
+    x -= 1;
+    let a = LANCZOS[0];
+    const t = x + 7.5;
+    for (let i = 1; i < 9; i++) a += LANCZOS[i] / (x + i);
+    return 0.5 * Math.log(2 * Math.PI) + (x + 0.5) * Math.log(t) - t + Math.log(a);
+  }
+  /** Regularisierte unvollständige Gammafunktion: P(a, x) über die Reihe, Q(a, x) über den Kettenbruch (Lentz). */
+  function gammaPQ(a, x, gln) {
+    if (!(x > 0)) return { P: 0, Q: 1 };
+    if (x === Infinity) return { P: 1, Q: 0 };
+    const lpre = -x + a * Math.log(x) - (gln == null ? lnGamma(a) : gln);
+    if (x < a + 1) {
+      let ap = a, del = 1 / a, sum = del;
+      for (let i = 0; i < MAXIT; i++) { ap += 1; del *= x / ap; sum += del; if (Math.abs(del) < Math.abs(sum) * DEPS) break; }
+      const P = sum * Math.exp(lpre);
+      return { P, Q: 1 - P };
+    }
+    let b = x + 1 - a, c = 1 / FPMIN, d = 1 / b, hh = d;
+    for (let i = 1; i < MAXIT; i++) {
+      const an = -i * (i - a);
+      b += 2;
+      d = an * d + b; if (Math.abs(d) < FPMIN) d = FPMIN;
+      c = b + an / c; if (Math.abs(c) < FPMIN) c = FPMIN;
+      d = 1 / d;
+      const del = d * c;
+      hh *= del;
+      if (Math.abs(del - 1) < DEPS) break;
+    }
+    const Q = Math.exp(lpre) * hh;
+    return { P: 1 - Q, Q };
+  }
+  /** Komplementäre Fehlerfunktion über Q(1/2, x²) – auch in den Ausläufern relativ genau (wichtig für ppm). */
+  function erfc(x) {
+    if (Number.isNaN(x)) return NaN;
+    if (x < 0) return 2 - erfc(-x);
+    return gammaPQ(0.5, x * x, LN_SQRT_PI).Q;
+  }
+  /** Standardnormalverteilung Φ(x). */
+  function normCdf(x) { return 0.5 * erfc(-x / Math.SQRT2); }
+  const ACK_A = [-3.969683028665376e+01, 2.209460984245205e+02, -2.759285104469687e+02, 1.383577518672690e+02, -3.066479806614716e+01, 2.506628277459239e+00];
+  const ACK_B = [-5.447609879822406e+01, 1.615858368580409e+02, -1.556989798598866e+02, 6.680131188771972e+01, -1.328068155288572e+01];
+  const ACK_C = [-7.784894002430293e-03, -3.223964580411365e-01, -2.400758277161838e+00, -2.549732539343734e+00, 4.374664141464968e+00, 2.938163982698783e+00];
+  const ACK_D = [7.784695709041462e-03, 3.224671290700398e-01, 2.445134137142996e+00, 3.754408661907416e+00];
+  /** Φ⁻¹(p): Näherung nach Acklam, verfeinert mit einem Halley-Schritt. */
+  function normInv(p) {
+    if (!(p > 0 && p < 1)) return p === 0 ? -Infinity : p === 1 ? Infinity : NaN;
+    const A = ACK_A, B = ACK_B, Cc = ACK_C, D = ACK_D, pl = 0.02425;
+    let x;
+    if (p < pl || p > 1 - pl) {
+      const q = Math.sqrt(-2 * Math.log(p < pl ? p : 1 - p));
+      x = (((((Cc[0] * q + Cc[1]) * q + Cc[2]) * q + Cc[3]) * q + Cc[4]) * q + Cc[5]) / ((((D[0] * q + D[1]) * q + D[2]) * q + D[3]) * q + 1);
+      if (p > 1 - pl) x = -x;
+    } else {
+      const q = p - 0.5, r = q * q;
+      x = (((((A[0] * r + A[1]) * r + A[2]) * r + A[3]) * r + A[4]) * r + A[5]) * q / (((((B[0] * r + B[1]) * r + B[2]) * r + B[3]) * r + B[4]) * r + 1);
+    }
+    const e = normCdf(x) - p;
+    const u = e * Math.sqrt(2 * Math.PI) * Math.exp(x * x / 2);
+    return x - u / (1 + x * u / 2);
+  }
+  /** Kettenbruch der unvollständigen Betafunktion (modifizierter Lentz). */
+  function betaCF(a, b, x) {
+    const qab = a + b, qap = a + 1, qam = a - 1;
+    let c = 1, d = 1 - qab * x / qap;
+    if (Math.abs(d) < FPMIN) d = FPMIN;
+    d = 1 / d;
+    let hh = d;
+    for (let m = 1; m <= MAXIT; m++) {
+      const m2 = 2 * m;
+      let aa = m * (b - m) * x / ((qam + m2) * (a + m2));
+      d = 1 + aa * d; if (Math.abs(d) < FPMIN) d = FPMIN;
+      c = 1 + aa / c; if (Math.abs(c) < FPMIN) c = FPMIN;
+      d = 1 / d; hh *= d * c;
+      aa = -(a + m) * (qab + m) * x / ((a + m2) * (qap + m2));
+      d = 1 + aa * d; if (Math.abs(d) < FPMIN) d = FPMIN;
+      c = 1 + aa / c; if (Math.abs(c) < FPMIN) c = FPMIN;
+      d = 1 / d;
+      const del = d * c;
+      hh *= del;
+      if (Math.abs(del - 1) < DEPS) break;
+    }
+    return hh;
+  }
+  /** Regularisierte unvollständige Betafunktion I_x(a, b). */
+  function betaI(a, b, x) {
+    if (!(x > 0)) return 0;
+    if (x >= 1) return 1;
+    const bt = Math.exp(lnGamma(a + b) - lnGamma(a) - lnGamma(b) + a * Math.log(x) + b * Math.log(1 - x));
+    return x < (a + 1) / (a + b + 2) ? bt * betaCF(a, b, x) / a : 1 - bt * betaCF(b, a, 1 - x) / b;
+  }
+  /** Verteilungsfunktion der t-Verteilung mit ν Freiheitsgraden (ν auch nicht ganzzahlig; ν = ∞ → Normalverteilung). */
+  function tCdf(t, nu) {
+    if (Number.isNaN(t) || !(nu > 0)) return NaN;
+    if (!isFinite(nu) || nu > 1e8) return normCdf(t);
+    if (t === Infinity) return 1;
+    if (t === -Infinity) return 0;
+    const tail = 0.5 * betaI(nu / 2, 0.5, nu / (nu + t * t)); // P(T ≤ −|t|), direkt gerechnet (genau in den Ausläufern)
+    return t > 0 ? 1 - tail : tail;
+  }
+  /** Verteilungsfunktion der F-Verteilung F(x; d1, d2). */
+  function fCdf(x, d1, d2) {
+    if (!(x > 0)) return 0;
+    if (!isFinite(d2)) return gammaPQ(d1 / 2, d1 * x / 2).P;
+    return betaI(d1 / 2, d2 / 2, d1 * x / (d1 * x + d2));
+  }
+  /** Oberer Ausläufer 1 − F(x; d1, d2), direkt gerechnet. */
+  function fSf(x, d1, d2) {
+    if (!(x > 0)) return 1;
+    if (!isFinite(d2)) return gammaPQ(d1 / 2, d1 * x / 2).Q;
+    return betaI(d2 / 2, d1 / 2, d2 / (d2 + d1 * x));
+  }
+  /** Digamma ψ(x) für x > 0: Rekursion bis x ≥ 10, dann asymptotische Reihe. */
+  function digamma(x) {
+    let r = 0;
+    while (x < 10) { r -= 1 / x; x += 1; }
+    const f = 1 / (x * x);
+    return r + Math.log(x) - 0.5 / x - f * (1 / 12 - f * (1 / 120 - f * (1 / 252 - f * (1 / 240 - f * (1 / 132 - f * 691 / 32760)))));
+  }
+  /** Trigamma ψ′(x) für x > 0: Rekursion bis x ≥ 10, dann asymptotische Reihe. */
+  function trigamma(x) {
+    let r = 0;
+    while (x < 10) { r += 1 / (x * x); x += 1; }
+    const f = 1 / (x * x);
+    return r + 1 / x + f / 2 + f / x * (1 / 6 - f * (1 / 30 - f * (1 / 42 - f * (1 / 30 - f * (5 / 66 - f * 691 / 2730)))));
+  }
+  /** Umkehrfunktion von ψ′ (monoton fallend): Bisektion in ln x. */
+  function trigammaInv(y) {
+    if (!(y > 0)) return NaN;
+    let lo = -40, hi = 40;
+    for (let i = 0; i < 200 && hi - lo > 1e-15; i++) {
+      const mid = (lo + hi) / 2;
+      if (trigamma(Math.exp(mid)) > y) lo = mid; else hi = mid;
+    }
+    return Math.exp((lo + hi) / 2);
+  }
+  /**
+   * Freiheitsgrade d̂₀ der Streuung zwischen Aufträgen (Smyth 2004, Momentenschätzer wie limma::fitFDist):
+   * e_j = ln s_j² − ψ(ν_j/2) + ln(ν_j/2); V = Σ(e_j − ē)²/(G−1) − (1/G)·Σ ψ′(ν_j/2); V ≤ 0 ⇒ d̂₀ = ∞, sonst 2·ψ′⁻¹(V).
+   * Gibt an, wie gut eine übernommene (gepoolte) Streuung die Streuung eines einzelnen Auftrags trifft.
+   */
+  function smythD0(s2, df) {
+    const G = s2.length;
+    if (G < 2) return { d0: Infinity, s02: G ? s2[0] : null, V: null };
+    const e = s2.map((v, j) => Math.log(v) - digamma(df[j] / 2) + Math.log(df[j] / 2));
+    const eb = e.reduce((a, v) => a + v, 0) / G;
+    const V = e.reduce((a, v) => a + (v - eb) * (v - eb), 0) / (G - 1) - df.reduce((a, d) => a + trigamma(d / 2), 0) / G;
+    if (!(V > 0)) return { d0: Infinity, s02: Math.exp(eb), V };
+    const d0 = 2 * trigammaInv(V);
+    return { d0, s02: Math.exp(eb + digamma(d0 / 2) - Math.log(d0 / 2)), V };
   }
 
   /** Kennwerte (Spindel oder Mutter) aus den Merkmalsstatistiken einer Einheit (Auftrag oder gepoolt). */
@@ -988,7 +1150,171 @@ globalThis.SubCore = (function () {
   }
 
   // ------------------------------------------------------------ Paarung Spindel × Mutter
+  /** Bewertungen: „minmax“ = Min/Max der Einzelwerte (Standard), „cap“ = Paarungsfähigkeit Cpk_Δ. */
+  const PAIR_BASES = ['minmax', 'cap'];
   const PAIR_DEFAULTS = { fit: 'gauss', basis: 'minmax', bcdLim: [15, 85], leadLim: [-25, 25], warnReserve: 5, krOffset: null, strokeFrom: null, strokeTo: null };
+
+  // ------------------------------------------------- Paarungsfähigkeit Cpk_Δ (Bewertung „Fähigkeit“)
+  // Vorgaben (CLAUDE.md, docs/entwurf-faehigkeit.md): Streuung je Auftrag; Aufträge mit < 3 Werten übernehmen die gepoolte
+  // Streuung der übrigen (ν nach Smyth); untere 95-%-Grenze über Welch-Satterthwaite und Delta-Methode;
+  // Status „Variante b“: außerhalb bei Cpk_Δ < 1,00, knapp bei Cpk_Δ ≥ 1,00 und unterer Grenze < 1,00, sonst ok.
+  const CAP = { min: 1, conf: 0.95, minN: 3, minGroups: 3, alpha: 0.01 };
+
+  /** Erst-/Letztstück-Versatz eines Auftrags an einem Merkmal (Welch-t-Test). Werte in der Einheit des Merkmals. */
+  function erstLetzt(st, s2min) {
+    if (!st || !st.tags) return null;
+    const E = [], L = [];
+    st.values.forEach((v, i) => { if (st.tags[i] === 'E') E.push(v); else if (st.tags[i] === 'L') L.push(v); });
+    if (E.length < 2 || L.length < 2) return null;
+    const avg = (a) => a.reduce((x, y) => x + y, 0) / a.length;
+    const vr = (a, mu) => Math.max(a.reduce((x, y) => x + (y - mu) * (y - mu), 0) / (a.length - 1), s2min);
+    const mE = avg(E), mL = avg(L), vE = vr(E, mE), vL = vr(L, mL);
+    const qE = vE / E.length, qL = vL / L.length;
+    const t = (mL - mE) / Math.sqrt(qE + qL);
+    const df = (qE + qL) * (qE + qL) / (qE * qE / (E.length - 1) + qL * qL / (L.length - 1));
+    const p = 2 * tCdf(-Math.abs(t), df);
+    const sW = Math.sqrt(((E.length - 1) * vE + (L.length - 1) * vL) / (E.length + L.length - 2));
+    return { d: mL - mE, t, df, p, nE: E.length, nL: L.length, sW, flagged: p < CAP.alpha };
+  }
+
+  /**
+   * Streuung je einbezogenem Auftrag und Merkmal (Abschnitt 2.1 des Entwurfs).
+   * Map(position → { byOrder: Map(id → Eintrag), pool: {s, df, k}, d0, h }), Werte in der Einheit des Merkmals (mm).
+   * Eintrag: n, mean, s (roh), s2 (mit Auflösungsuntergrenze h²/12), sUsed, df, src 'own' | 'borrowed' | 'none',
+   * F/fP/flagged (streut stärker als die übrigen, nur Hinweis), el (Erst-/Letztstück-Versatz, nur Hinweis).
+   * Ausgeschlossene Aufträge gehen weder in die gepoolte Streuung noch in d̂₀ ein.
+   */
+  function spreadTable(ds, res) {
+    const table = new Map();
+    const units = res.order.map((id) => res.units.get(id)).filter((u) => u && u.included);
+    for (const c of ds.chars) {
+      const h = Math.pow(10, -(c.decimals || 0));
+      const s2min = h * h / 12;
+      const byOrder = new Map(), own = [];
+      for (const u of units) {
+        const st = u.chars.get(c.position);
+        if (!st) continue;
+        const s2raw = st.sd != null ? st.sd * st.sd : null;
+        const e = {
+          id: u.id, n: st.n, mean: st.mean, s: st.sd, s2: s2raw == null ? null : Math.max(s2raw, s2min), floored: s2raw != null && s2raw < s2min,
+          values: st.values, sUsed: null, df: null, src: 'none', F: null, fP: null, flagged: false, el: erstLetzt(st, s2min),
+        };
+        if (st.n >= CAP.minN) { e.sUsed = Math.sqrt(e.s2); e.df = st.n - 1; e.src = 'own'; own.push(e); }
+        byOrder.set(u.id, e);
+      }
+      const sumDf = own.reduce((a, e) => a + e.df, 0), sumSS = own.reduce((a, e) => a + e.df * e.s2, 0);
+      const pool = { s: sumDf > 0 ? Math.sqrt(sumSS / sumDf) : null, df: sumDf, k: own.length };
+      const sm = smythD0(own.map((e) => e.s2), own.map((e) => e.df));
+      for (const e of own) {
+        const dfo = sumDf - e.df;
+        if (!(dfo > 0)) continue;
+        e.F = e.s2 / ((sumSS - e.df * e.s2) / dfo);
+        e.fP = fSf(e.F, e.df, dfo);
+        e.flagged = e.fP < CAP.alpha;
+      }
+      if (own.length >= CAP.minGroups) {
+        for (const e of byOrder.values()) if (e.src === 'none') { e.sUsed = pool.s; e.df = Math.min(sm.d0, sumDf); e.src = 'borrowed'; }
+      }
+      table.set(c.position, { position: c.position, byOrder, pool, d0: own.length >= 2 ? sm.d0 : null, h, s2min });
+    }
+    return table;
+  }
+
+  /**
+   * Paarungsfähigkeit der Differenz Δ = Mutter − Spindel an einem Ort (Abschnitt 2.2). M, S: Einträge aus spreadTable
+   * (Werte in mm), L…U in µm. Ergebnis in µm; null, wenn eine Streuung nicht schätzbar ist.
+   */
+  function capDiff(M, S, L, U) {
+    if (!M || !S || M.sUsed == null || S.sUsed == null || !(M.n > 0) || !(S.n > 0)) return null;
+    const sM = M.sUsed * 1000, sS = S.sUsed * 1000;
+    const mu = (M.mean - S.mean) * 1000;
+    const v = sM * sM + sS * sS, sd = Math.sqrt(v);
+    if (!(sd > 0) || !isFinite(mu)) return null;
+    const qM = isFinite(M.df) ? sM * sM * sM * sM / M.df : 0, qS = isFinite(S.df) ? sS * sS * sS * sS / S.df : 0;
+    const nu = qM + qS > 0 ? v * v / (qM + qS) : Infinity;
+    const nEff = v / (sM * sM / M.n + sS * sS / S.n);
+    const cpkU = (U - mu) / (3 * sd), cpkL = (mu - L) / (3 * sd);
+    const cpk = Math.min(cpkL, cpkU), cp = (U - L) / (6 * sd);
+    const z = normInv(CAP.conf);
+    const seOf = (c) => Math.sqrt(1 / (9 * nEff) + (isFinite(nu) ? c * c / (2 * nu) : 0));
+    const seL = seOf(cpkL), seU = seOf(cpkU);
+    const cpkLo = Math.min(cpkL - z * seL, cpkU - z * seU);
+    const sp = sd * Math.sqrt(1 + 1 / nEff);
+    const pPred = tCdf((L - mu) / sp, nu) + tCdf((mu - U) / sp, nu);
+    const pPlug = normCdf(-3 * cpkL) + normCdf(-3 * cpkU);
+    const mv = M.values || [], sv = S.values || [];
+    let kOut = 0;
+    for (const a of mv) for (const b of sv) { const d = (a - b) * 1000; if (d < L - EPS || d > U + EPS) kOut++; }
+    return {
+      mu, sd, sM, sS, nM: M.n, nS: S.n, dfM: M.df, dfS: S.df, srcM: M.src, srcS: S.src, nu, nEff, z,
+      cp, cpk, cpkL, cpkU, seL, seU, cpkLo, side: cpkL <= cpkU ? 'L' : 'U',
+      lo: mu - 3 * sd, hi: mu + 3 * sd, reserve: Math.min(mu - 3 * sd - L, U - mu - 3 * sd),
+      sdPred: sp, pPred, pPlug, kOut, N: mv.length * sv.length,
+    };
+  }
+
+  /** Status je Ort (Variante b): außerhalb bei Cpk_Δ < 1,00; knapp, wenn die untere Grenze < 1,00 (nicht nachgewiesen); sonst ok. */
+  function capStatus(c) {
+    if (!c || !isFinite(c.cpk) || Number.isNaN(c.cpkLo)) return 'na';
+    if (c.cpk < CAP.min - EPS) return 'out';
+    if (!(c.cpkLo >= CAP.min - EPS)) return 'warn';
+    return 'ok';
+  }
+
+  /** Schwere eines Status für „schlechtester Ort“ und Rangfolge: außerhalb > keine Daten > knapp > ok. */
+  const SEVERITY = { ok: 0, warn: 1, na: 2, out: 3 };
+  /** Ist Ort a maßgeblicher als Ort b? Zuerst Status, dann kleinerer Cpk_Δ, dann kleinere untere Grenze. */
+  function capWorse(a, b) {
+    if (SEVERITY[a.status] !== SEVERITY[b.status]) return SEVERITY[a.status] > SEVERITY[b.status];
+    const ca = a.cap ? a.cap.cpk : -Infinity, cb = b.cap ? b.cap.cpk : -Infinity;
+    if (ca !== cb) return ca < cb;
+    const la = a.cap ? a.cap.cpkLo : -Infinity, lb = b.cap ? b.cap.cpkLo : -Infinity;
+    return la < lb;
+  }
+
+  /**
+   * Zusammenfassung eines Kriteriums (BCD bzw. Steigung) einer Zelle bei „Fähigkeit“ (Abschnitt 2.4):
+   * Status = schlechtester Status über alle Orte; maßgeblicher Ort nach capWorse; dazu Cpk_min, Cpk_unten,min (mit Ort),
+   * Boole-Schranken für den Anteil Montagen mit mindestens einem Ort außerhalb.
+   */
+  function capAggregate(items) {
+    const base = { items, lo: null, hi: null, reserve: null, status: 'na', nOut: 0, nWarn: 0, nNa: 0, worst: null, score: null, cpkMin: null, cpkLoMin: null, minAt: null, minLoAt: null, pMax: null, pSum: null };
+    if (!items.length) return base;
+    let lo = Infinity, hi = -Infinity, worst = null, minAt = null, minLoAt = null, pMax = 0, pSum = 0, any = false;
+    for (const it of items) {
+      const c = it.cap;
+      it.status = capStatus(c);
+      it.lo = c ? c.lo : null; it.hi = c ? c.hi : null; it.reserve = c ? c.reserve : null;
+      if (c) {
+        any = true;
+        if (c.lo < lo) lo = c.lo;
+        if (c.hi > hi) hi = c.hi;
+        if (!minAt || c.cpk < minAt.cap.cpk) minAt = it;
+        if (!minLoAt || c.cpkLo < minLoAt.cap.cpkLo) minLoAt = it;
+        if (c.pPred > pMax) pMax = c.pPred;
+        pSum += c.pPred;
+      }
+      if (!worst || capWorse(it, worst)) worst = it;
+    }
+    return Object.assign(base, {
+      lo: any ? lo : null, hi: any ? hi : null, worst, status: worst.status, reserve: worst.reserve, score: worst.cap ? worst.cap.cpk : null,
+      nOut: items.filter((i) => i.status === 'out').length, nWarn: items.filter((i) => i.status === 'warn').length, nNa: items.filter((i) => i.status === 'na').length,
+      cpkMin: minAt ? minAt.cap.cpk : null, cpkLoMin: minLoAt ? minLoAt.cap.cpkLo : null, minAt, minLoAt,
+      pMax: any ? pMax : null, pSum: any ? Math.min(1, pSum) : null,
+    });
+  }
+
+  /** Marken am Ort: σ* = Streuung übernommen, σ! = Streuung auffällig, E/L = Versatz Erst-/Letztstücke. */
+  function capFlags(eN, eS) {
+    const f = { borrowed: [], sigma: [], el: [] };
+    for (const [who, e] of [['Mutter', eN], ['Spindel', eS]]) {
+      if (!e) continue;
+      if (e.src === 'borrowed') f.borrowed.push(who);
+      if (e.flagged) f.sigma.push(who);
+      if (e.el && e.el.flagged) f.el.push(who);
+    }
+    return f;
+  }
 
   /**
    * Geometrie der Paarung: welche Kugelrille (KR) der Mutter läuft über welchen Spindelgang.
@@ -1024,24 +1350,52 @@ globalThis.SubCore = (function () {
   }
 
   /**
+   * Rangfolge eines Kriteriums für „ungünstigstes Paar“ und Startauswahl (kleiner = ungünstiger).
+   * Min/Max: Reserve. Fähigkeit: zuerst Status (außerhalb vor knapp vor ok), dann Cpk_Δ; „keine Daten“ zählt hier nicht.
+   */
+  function critRank(a, basis) {
+    if (!a || !a.worst) return [Infinity, Infinity];
+    if (basis !== 'cap') return [0, a.reserve];
+    if (a.status === 'na' || a.score == null) return [Infinity, Infinity];
+    return [3 - SEVERITY[a.status], a.score];
+  }
+  const rankLess = (x, y) => x[0] < y[0] || (x[0] === y[0] && x[1] < y[1]);
+
+  /**
    * Paarungsmatrix: alle einbezogenen Spindel-Aufträge × alle einbezogenen Mutter-Aufträge.
-   * Δ = Mutter − Spindel in µm. Basis „minmax“: ungünstigste Einzelteile (Min Mutter − Max Spindel … Max Mutter − Min Spindel),
-   * Basis „mean“: Differenz der Auftragsmittel. BCD je sichtbarem Paar Gang/KR mit gewählter Auswertung (Gauss/Hüll/Pferch),
-   * Steigung je Mutterfenster gegen alle Spindelfenster gleicher Gangzahl.
+   * Δ = Mutter − Spindel in µm. BCD je sichtbarem Paar Gang/KR mit gewählter Auswertung (Gauss/Hüll/Pferch),
+   * Steigung je Mutterfenster gegen alle Spindelfenster gleicher Nennlänge.
+   * Bewertung „minmax“ (Standard): ungünstigste Einzelteile (Min Mutter − Max Spindel … Max Mutter − Min Spindel), Status über die Reserve.
+   * Bewertung „cap“: Paarungsfähigkeit Cpk_Δ je Ort (capDiff), Status nach capStatus; lo/hi = μΔ ± 3σΔ.
+   * Jeder Ort trägt immer mm = {lo, hi} (Min/Max) und mid (Differenz der Auftragsmittel).
    */
   function pairing(sp, nu, opts) {
     const o = Object.assign({}, PAIR_DEFAULTS, opts || {});
+    if (!PAIR_BASES.includes(o.basis)) o.basis = PAIR_DEFAULTS.basis;
+    const cap = o.basis === 'cap';
     const geo = pairingGeometry(sp.ds, nu.ds, o);
     const [bLo, bHi] = o.bcdLim, [lLo, lHi] = o.leadLim;
     const um = (x) => x * 1000;
-    const diff = (a, b) => {
-      const mid = um(a.mean - b.mean);
-      return o.basis === 'mean' ? { lo: mid, hi: mid, mid } : { lo: um(a.min - b.max), hi: um(a.max - b.min), mid };
+    const spread = cap ? { sp: spreadTable(sp.ds, sp.res), nu: spreadTable(nu.ds, nu.res) } : null;
+    const used = { sp: new Set(), nu: new Set() };
+    const base = (a, b) => {
+      const mm = { lo: um(a.min - b.max), hi: um(a.max - b.min) };
+      return { mm, lo: mm.lo, hi: mm.hi, mid: um(a.mean - b.mean) };
+    };
+    const withCap = (it, nuPos, spPos, unId, usId, L, H) => {
+      used.nu.add(nuPos); used.sp.add(spPos);
+      if (!cap) return it;
+      const tN = spread.nu.get(nuPos), tS = spread.sp.get(spPos);
+      it.nutSpread = tN ? tN.byOrder.get(unId) || null : null;
+      it.spSpread = tS ? tS.byOrder.get(usId) || null : null;
+      it.cap = capDiff(it.nutSpread, it.spSpread, L, H);
+      it.flags = capFlags(it.nutSpread, it.spSpread);
+      return it;
     };
     const reserveOf = (lo, hi, L, H) => Math.min(lo - L, H - hi);
     const statusOf = (r) => (r < -EPS ? 'out' : r < o.warnReserve - EPS ? 'warn' : 'ok');
-    const agg = (items, L, H) => {
-      if (!items.length) return { items, lo: null, hi: null, reserve: null, status: 'na', nOut: 0, nWarn: 0, worst: null };
+    const aggMinMax = (items, L, H) => {
+      if (!items.length) return { items, lo: null, hi: null, reserve: null, status: 'na', nOut: 0, nWarn: 0, worst: null, score: null };
       let lo = Infinity, hi = -Infinity, worst = null;
       for (const it of items) {
         it.reserve = reserveOf(it.lo, it.hi, L, H);
@@ -1051,13 +1405,14 @@ globalThis.SubCore = (function () {
         if (!worst || it.reserve < worst.reserve) worst = it;
       }
       const reserve = worst.reserve;
-      return { items, lo, hi, reserve, status: statusOf(reserve), nOut: items.filter((i) => i.status === 'out').length, nWarn: items.filter((i) => i.status === 'warn').length, worst };
+      return { items, lo, hi, reserve, status: statusOf(reserve), nOut: items.filter((i) => i.status === 'out').length, nWarn: items.filter((i) => i.status === 'warn').length, worst, score: reserve };
     };
+    const agg = (items, L, H) => (cap ? capAggregate(items) : aggMinMax(items, L, H));
     const spU = sp.res.order.map((x) => sp.res.units.get(x)).filter((u) => u.included);
     const nuU = nu.res.order.map((x) => nu.res.units.get(x)).filter((u) => u.included);
     const cells = new Map();
     const counts = { pairs: 0, bcdOut: 0, bcdWarn: 0, leadOut: 0, leadWarn: 0, bothOk: 0, bcdNa: 0, leadNa: 0, incomplete: 0 };
-    let worstBcd = null, worstLead = null;
+    let worstBcd = null, worstLead = null, minCapBcd = null, minCapLead = null;
     for (const us of spU) {
       const spProf = new Map(us.summary.bcd.profile.map((p) => [p.gang, p]));
       for (const un of nuU) {
@@ -1069,7 +1424,8 @@ globalThis.SubCore = (function () {
           for (const k of v.krs) {
             const a = nuProf.get(k);
             if (!a || !a[o.fit]) continue;
-            bcd.push(Object.assign({ gang: v.gang, kr: k, nut: a[o.fit], sp: b[o.fit] }, diff(a[o.fit].stats, b[o.fit].stats)));
+            const it = Object.assign({ gang: v.gang, kr: k, nut: a[o.fit], sp: b[o.fit] }, base(a[o.fit].stats, b[o.fit].stats));
+            bcd.push(withCap(it, a[o.fit].char.position, b[o.fit].char.position, un.id, us.id, bLo, bHi));
           }
         }
         const lead = [];
@@ -1079,12 +1435,14 @@ globalThis.SubCore = (function () {
           for (const s of lp.sp) {
             const b = us.chars.get(s.position);
             if (!b) continue;
-            lead.push(Object.assign({ nutChar: lp.nut, spChar: s, nutStats: a, spStats: b }, diff(a, b)));
+            const it = Object.assign({ nutChar: lp.nut, spChar: s, nutStats: a, spStats: b }, base(a, b));
+            lead.push(withCap(it, lp.nut.position, s.position, un.id, us.id, lLo, lHi));
           }
         }
         const cell = { key: us.id + '|' + un.id, s: us, n: un, bcd: agg(bcd, bLo, bHi), lead: agg(lead, lLo, lHi) };
         const sts = [cell.bcd.status, cell.lead.status];
         cell.status = sts.includes('out') ? 'out' : sts.includes('na') ? 'na' : sts.includes('warn') ? 'warn' : 'ok';
+        cell.rank = rankLess(critRank(cell.lead, o.basis), critRank(cell.bcd, o.basis)) ? critRank(cell.lead, o.basis) : critRank(cell.bcd, o.basis);
         cells.set(cell.key, cell);
         counts.pairs++;
         if (cell.bcd.status === 'out') counts.bcdOut++; else if (cell.bcd.status === 'warn') counts.bcdWarn++;
@@ -1093,34 +1451,78 @@ globalThis.SubCore = (function () {
         if (cell.bcd.status === 'na') counts.bcdNa++;
         if (cell.lead.status === 'na') counts.leadNa++;
         if (cell.status === 'na') counts.incomplete++;
-        if (cell.bcd.worst && (!worstBcd || cell.bcd.reserve < worstBcd.bcd.reserve)) worstBcd = cell;
-        if (cell.lead.worst && (!worstLead || cell.lead.reserve < worstLead.lead.reserve)) worstLead = cell;
+        if (cell.bcd.worst && isFinite(critRank(cell.bcd, o.basis)[0]) && (!worstBcd || rankLess(critRank(cell.bcd, o.basis), critRank(worstBcd.bcd, o.basis)))) worstBcd = cell;
+        if (cell.lead.worst && isFinite(critRank(cell.lead, o.basis)[0]) && (!worstLead || rankLess(critRank(cell.lead, o.basis), critRank(worstLead.lead, o.basis)))) worstLead = cell;
+        if (cap) {
+          if (cell.bcd.cpkMin != null && (!minCapBcd || cell.bcd.cpkMin < minCapBcd.bcd.cpkMin)) minCapBcd = cell;
+          if (cell.lead.cpkMin != null && (!minCapLead || cell.lead.cpkMin < minCapLead.lead.cpkMin)) minCapLead = cell;
+        }
       }
     }
+    // Startauswahl: das ungünstigste Paar über beide Kriterien
+    let worst = null;
+    for (const c of cells.values()) if (isFinite(c.rank[0]) && (!worst || rankLess(c.rank, worst.rank))) worst = c;
     // „passend“ = beide Kriterien bewertet und keines außerhalb
     const fits = (c) => c.status === 'ok' || c.status === 'warn';
     const rowOk = new Map(spU.map((us) => [us.id, nuU.filter((un) => fits(cells.get(us.id + '|' + un.id))).length]));
     const colOk = new Map(nuU.map((un) => [un.id, spU.filter((us) => fits(cells.get(us.id + '|' + un.id))).length]));
-    return { opts: o, geo, spU, nuU, cells, counts, worstBcd, worstLead, rowOk, colOk };
+    return { opts: o, geo, spU, nuU, cells, counts, worstBcd, worstLead, minCapBcd, minCapLead, worst, rowOk, colOk, spread, used };
   }
 
-  /** Paarungsmatrix als CSV (Semikolon, Dezimalkomma). */
+  /** Ort eines Paarungsvergleichs als Text: „Gang 17/KR4“ bzw. „KR1–KR4 / G1–G7“. */
+  const pairLoc = (it) => (!it ? '' : it.gang != null ? `Gang ${it.gang}/KR${it.kr}` : `${it.nutChar.cls.label.replace('Steigung ', '')} / ${it.spChar.cls.label.replace('Steigung ', '')}`);
+  /** Rundung zur Grenze hin: Cpk abrunden (konsistent mit der Status-Toleranz EPS), Anteile aufrunden. */
+  const floorTo = (v, d) => { const k = Math.pow(10, d); return Math.floor((v + EPS) * k + 1e-9) / k; };
+  const ceilSig = (v, sig) => {
+    if (!(v > 0)) return v === 0 ? 0 : v;
+    const k = Math.pow(10, sig - 1 - Math.floor(Math.log10(v)));
+    return Math.ceil(v * k * (1 - 1e-12)) / k;
+  };
+
+  /** Paarungsmatrix als CSV (Semikolon, Dezimalkomma). Kopfzeile bei beiden Bewertungen gleich; Fähigkeits-Spalten nur bei „Fähigkeit“ gefüllt. */
   function exportPairingCSV(pm, spDs, nuDs) {
     const dec = (v) => (v == null || !isFinite(v) ? '' : String(+v.toFixed(3)).replace('.', ','));
     const ST = { ok: 'ok', warn: 'knapp', out: 'außerhalb', na: 'keine Daten' };
     // Anzeige-Rundung zur Grenze hin (wie in der Oberfläche), damit Status und Zahl nie widersprechen
     const fl = (v) => (v == null || !isFinite(v) ? '' : String(Math.floor(v * 1000 + 1e-9) / 1000).replace('.', ','));
+    const flC = (v) => (v == null || !isFinite(v) ? '' : String(floorTo(v, 3)).replace('.', ','));
+    const ppm = (p) => (p == null || !isFinite(p) ? '' : String(ceilSig(p * 1e6, 3)).replace('.', ','));
+    const nuS = (v) => (v == null ? '' : !isFinite(v) ? 'unendlich' : dec(v));
+    const pS = (p) => (p < 0.001 ? '< 0,001' : dec(p));
     const FL = { gauss: 'Gauss', huell: 'Hüll', pferch: 'Pferch' };
-    const o = pm.opts;
+    const SRC = { own: 'eigene', borrowed: 'übernommen', none: 'nicht schätzbar' };
+    const o = pm.opts, cap = o.basis === 'cap';
+    const capHead = (p) => [`${p}_Cpk`, `${p}_Cpk_unten`, `${p}_Ort`, `${p}_muDelta_um`, `${p}_sigmaDelta_um`, `${p}_sigma_Mutter_um`, `${p}_sigma_Spindel_um`, `${p}_nu`,
+      `${p}_Anteil_ppm`, `${p}_Anteil_ppm_max`, `${p}_Anteil_ppm_Summe`, `${p}_k_ausserhalb`, `${p}_N_Kombinationen`, `${p}_Streuung_Quelle`, `${p}_Hinweise`];
+    const notes = (it) => {
+      const r = [];
+      const f = it.flags;
+      if (f.borrowed.length) r.push(`Streuung übernommen (${f.borrowed.join(', ')})`);
+      for (const [who, e] of [['Mutter', it.nutSpread], ['Spindel', it.spSpread]]) {
+        if (e && e.flagged) r.push(`Streuung auffällig ${who} (F-Test p ${pS(e.fP)})`);
+        if (e && e.el && e.el.flagged) r.push(`Erst/Letzt-Versatz ${who} ${dec(e.el.d * 1000)} µm (p ${pS(e.el.p)})`);
+      }
+      return r.join(' · ');
+    };
+    const capCols = (a) => {
+      const it = a.worst, c = it && it.cap;
+      if (!cap || !it) return capHead('x').map(() => '');
+      const src = it.nutSpread || it.spSpread ? `Mutter ${SRC[it.nutSpread ? it.nutSpread.src : 'none']} / Spindel ${SRC[it.spSpread ? it.spSpread.src : 'none']}` : '';
+      if (!c) return ['', '', pairLoc(it), '', '', '', '', '', '', '', '', '', '', src, notes(it)];
+      return [flC(c.cpk), flC(c.cpkLo), pairLoc(it), dec(c.mu), dec(c.sd), dec(c.sM), dec(c.sS), nuS(c.nu),
+        ppm(c.pPred), ppm(a.pMax), ppm(a.pSum), String(c.kOut), String(c.N), src, notes(it)];
+    };
     const head = ['Spindel_Material', 'Spindel_Auftrag', 'Spindel_Charge', 'Mutter_Material', 'Mutter_Auftrag', 'Mutter_Charge', 'Auswertung', 'Bewertung',
       'BCD_Grenze_min_um', 'BCD_Grenze_max_um', 'dBCD_min_um', 'dBCD_max_um', 'BCD_Reserve_um', 'BCD_Status', 'BCD_knappstes_Paar',
-      'Steigung_Grenze_um', 'dL_min_um', 'dL_max_um', 'Steigung_Reserve_um', 'Steigung_Status', 'Steigung_knappstes_Fenster'];
+      'Steigung_Grenze_um', 'dL_min_um', 'dL_max_um', 'Steigung_Reserve_um', 'Steigung_Status', 'Steigung_knappstes_Fenster',
+      ...capHead('BCD'), ...capHead('Stg')];
     const out = [head.join(';')];
     for (const us of pm.spU) for (const un of pm.nuU) {
       const c = pm.cells.get(us.id + '|' + un.id);
-      out.push([spDs.material, us.id, us.batch.batchNo, nuDs.material, un.id, un.batch.batchNo, FL[o.fit], o.basis === 'mean' ? 'Mittelwerte' : 'Min/Max Einzelwerte',
-        dec(o.bcdLim[0]), dec(o.bcdLim[1]), dec(c.bcd.lo), dec(c.bcd.hi), fl(c.bcd.reserve), ST[c.bcd.status], c.bcd.worst ? `Gang ${c.bcd.worst.gang}/KR${c.bcd.worst.kr}` : '',
-        `±${dec(o.leadLim[1])}`, dec(c.lead.lo), dec(c.lead.hi), fl(c.lead.reserve), ST[c.lead.status], c.lead.worst ? `${c.lead.worst.nutChar.cls.label.replace('Steigung ', '')} / ${c.lead.worst.spChar.cls.label.replace('Steigung ', '')}` : '',
+      out.push([spDs.material, us.id, us.batch.batchNo, nuDs.material, un.id, un.batch.batchNo, FL[o.fit], cap ? `Fähigkeit (Cpk_Δ, ${Math.round(CAP.conf * 100)} %)` : 'Min/Max Einzelwerte',
+        dec(o.bcdLim[0]), dec(o.bcdLim[1]), dec(c.bcd.lo), dec(c.bcd.hi), fl(c.bcd.reserve), ST[c.bcd.status], pairLoc(c.bcd.worst),
+        `±${dec(o.leadLim[1])}`, dec(c.lead.lo), dec(c.lead.hi), fl(c.lead.reserve), ST[c.lead.status], pairLoc(c.lead.worst),
+        ...capCols(c.bcd), ...capCols(c.lead),
       ].join(';'));
     }
     return out.join('\r\n') + '\r\n';
@@ -1162,6 +1564,8 @@ globalThis.SubCore = (function () {
     Issues, parseCAQ, detectPartType, classify, buildModel, describe, summarize, characterize, exportCSV,
     pairingGeometry, pairing, exportPairingCSV, PAIR_DEFAULTS, splitByPartType,
     GROUPS, THREAD_GROUPS, FIT_LABEL, TYPE_LABEL, fmtDay,
+    lnGamma, erfc, normCdf, normInv, betaI, tCdf, fCdf, fSf, digamma, trigamma, trigammaInv, smythD0,
+    CAP, PAIR_BASES, SEVERITY, spreadTable, erstLetzt, capDiff, capStatus, capAggregate, capFlags, pairLoc, floorTo, ceilSig,
   };
 })();
 </script>

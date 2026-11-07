@@ -14,6 +14,7 @@
  *   - Durchmesser mit Endung .GG, die kein BCD sind (Außen-ø, Kern-ø, Lagersitz)
  *   - BCD-Kennzahlen (Range, Kopie „wie 713.1.GG“), Merkmal mit allen Werten außer Toleranz
  *   - Leerzeichen am Ende von strInspectionOrder, Werte mit 6 Nachkommastellen
+ *   - ein Auftrag mit Versatz zwischen Erst- und Letztstücken (+8 µm am BCD), für die Bewertung „Fähigkeit“
  *
  * Aufruf:  node tools/generate-synthetic-mutter.js [ausgabe.csv]
  */
@@ -103,7 +104,7 @@ const ORD = [
   { start: '2026-10-23 13:02:28', m: 3 },
   { start: '2026-11-02 10:33:33', m: 1, shift: 3.5 },
   { start: '2026-11-02 10:33:33', m: 2 },
-  { start: '2026-11-03 08:44:30', m: 3, leadShift: 2 },
+  { start: '2026-11-03 08:44:30', m: 3, leadShift: 2, el: 8 },
   { start: '2026-11-03 08:44:30', m: 0 },
 ].map((o, i) => Object.assign(o, { order: String(90020011 + i * 3), batch: String(7200301 + i * 2), off: gauss(0, 2.5) + (o.shift || 0), loff: gauss(0, 1.6) + (o.leadShift || 0) }));
 
@@ -181,7 +182,7 @@ for (const o of ORD) {
   }
   const erst = [];
   for (let i = 0; i < 5; i++) {
-    const part = finalize(makePart(o, -0.8)), uuid = hex32();
+    const part = finalize(makePart(o, o.el ? -o.el / 2 : -0.8)), uuid = hex32();
     const ev = o.erstOneSample
       ? { part, sampleNo: 1, sample: i + 1, tool: i + 1, uuid, remark: ERST, startLocal: o.start, utcMs: utcOf(t0) - 2300e3 + i * 14 * 60e3 }
       : { part, sampleNo: i + 1, sample: i + 1, tool: 1, uuid, remark: ERST, startLocal: o.start, utcMs: utcOf(t0) - 6300e3 + i * 14 * 60e3 };
@@ -191,7 +192,7 @@ for (const o of ORD) {
   const tL = t0 + (24 + Math.floor(rnd() * 30)) * 3600e3;
   const startL = fmtTs(tL);
   for (let i = 0; i < 5; i++) {
-    const part = finalize(makePart(o, 0.8));
+    const part = finalize(makePart(o, o.el ? o.el / 2 : 0.8));
     const sn = o.erstOneSample ? 7 + i : 6 + i;
     emit(o, { part, sampleNo: sn, sample: sn, tool: 1, uuid: hex32(), remark: LETZT, startLocal: startL, utcMs: utcOf(tL) - 1800e3 + i * 14 * 60e3 });
   }
