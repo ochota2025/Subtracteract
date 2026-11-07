@@ -1,0 +1,14 @@
+# Öffentliches Repository: echte CAQ-Exporte niemals committen.
+# Erlaubt sind nur synthetische Testdaten unter testdata/.
+*.csv
+*.CSV
+*.xlsx
+*.xls
+!testdata/*.csv
+daten/
+exporte/
+
+# Lokales
+.DS_Store
+Thumbs.db
+node_modules/

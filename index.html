@@ -1,0 +1,1464 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Subtracteract · Spindel</title>
+<style>
+[hidden]{display:none!important}
+*{box-sizing:border-box}
+/* Maße in rem: 1rem = 14px (Notebook), 15px (Full HD), 17px (4K @125–150 %), 20px (4K @100 %) */
+html{font-size:14px;-webkit-text-size-adjust:100%}
+@media (min-width:1600px){html{font-size:15px}}
+@media (min-width:2400px){html{font-size:17px}}
+@media (min-width:3200px){html{font-size:20px}}
+:root{
+  color-scheme:light;
+  --page:#f9f9f7;--surface:#fcfcfb;--surface2:#f3f2ee;--hover:#efeee9;--selwash:rgba(42,120,214,.09);
+  --text:#0b0b0b;--text2:#52514e;--muted:#898781;
+  --grid:#e1e0d9;--axis:#c3c2b7;--border:rgba(11,11,11,.10);
+  --s1:#2a78d6;--s2:#eb6834;--s3:#1baf7a;--ctx:#cbc9c1;--tolband:#ecebe5;
+  --good:#0ca30c;--warn:#fab219;--crit:#d03b3b;
+  --gap:1.15rem;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    color-scheme:dark;
+    --page:#0d0d0d;--surface:#1a1a19;--surface2:#222220;--hover:#262624;--selwash:rgba(57,135,229,.16);
+    --text:#f0efec;--text2:#c3c2b7;--muted:#898781;
+    --grid:#2c2c2a;--axis:#383835;--border:rgba(255,255,255,.10);
+    --s1:#3987e5;--s2:#d95926;--s3:#199e70;--ctx:#4a4945;--tolband:#252523;
+  }
+}
+:root[data-theme="dark"]{
+  color-scheme:dark;
+  --page:#0d0d0d;--surface:#1a1a19;--surface2:#222220;--hover:#262624;--selwash:rgba(57,135,229,.16);
+  --text:#f0efec;--text2:#c3c2b7;--muted:#898781;
+  --grid:#2c2c2a;--axis:#383835;--border:rgba(255,255,255,.10);
+  --s1:#3987e5;--s2:#d95926;--s3:#199e70;--ctx:#4a4945;--tolband:#252523;
+}
+body{margin:0;background:var(--page);color:var(--text);font:1rem/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+.wrap{max-width:89rem;margin:0 auto;padding-left:16px;padding-right:16px}
+.top{background:var(--surface);border-bottom:1px solid var(--border)}
+.top-inner{display:flex;align-items:center;justify-content:space-between;gap:.85rem 1.15rem;padding-top:.85rem;padding-bottom:.85rem;flex-wrap:wrap}
+.brand{display:flex;align-items:center;gap:.7rem}
+.brand h1{font-size:1.29rem;margin:0;letter-spacing:-.01em}
+.brand p{margin:0;color:var(--text2);font-size:.9rem}
+.logo{width:2.3rem;height:2.3rem;border-radius:.57rem;background:var(--s1);color:#fff;display:grid;place-items:center;font-size:1.43rem;font-weight:600;flex:none}
+.steps{display:flex;gap:.43rem;flex-wrap:wrap}
+.step{font-size:.9rem;padding:.28rem .7rem;border-radius:999px;border:1px solid var(--border);color:var(--muted)}
+.step.on{background:var(--text);color:var(--surface);border-color:transparent}
+main{padding-top:var(--gap);padding-bottom:3.4rem;display:grid;grid-template-columns:minmax(0,1fr);gap:var(--gap);align-items:start}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:.85rem;padding:1.15rem 1.3rem;min-width:0}
+.sec-head{display:flex;align-items:flex-start;justify-content:space-between;gap:.7rem 1.15rem;flex-wrap:wrap;margin-bottom:.85rem}
+h2{font-size:1.15rem;margin:0}
+h3{font-size:1rem;margin:0}
+.sub{color:var(--text2);margin:.2rem 0 0;font-size:.93rem;max-width:95ch}
+.drop{border:1.5px dashed var(--axis);border-radius:.7rem;padding:2rem 1.15rem;text-align:center;display:flex;flex-direction:column;gap:.28rem;align-items:center;cursor:pointer;color:var(--text2)}
+.drop strong{color:var(--text);font-size:1.07rem}
+.drop small{color:var(--muted);margin-top:.43rem;font-size:.86rem}
+.drop:hover,.drop:focus-visible,.drop.over{border-color:var(--s1);background:var(--selwash);outline:none}
+.drop.compact{padding:.7rem 1.15rem;flex-direction:row;justify-content:center;gap:.28rem .85rem;flex-wrap:wrap}
+.drop.compact strong{font-size:1rem}
+.drop.compact small{margin:0}
+.filebar{display:flex;align-items:center;justify-content:space-between;gap:.57rem .85rem;flex-wrap:wrap;margin-top:.7rem;font-size:.93rem;color:var(--text2)}
+.filebar .names{display:flex;gap:.43rem;flex-wrap:wrap;align-items:center}
+.chip{border:1px solid var(--border);border-radius:999px;padding:.14rem .7rem;background:var(--surface2);color:var(--text);word-break:break-all}
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(11.5rem,1fr));gap:.7rem;margin:0 0 1rem}
+.tile{border:1px solid var(--border);border-radius:.7rem;padding:.7rem .85rem;background:var(--surface);min-width:0}
+.tile .lbl{font-size:.86rem;color:var(--text2)}
+.tile .val{font-size:1.43rem;font-weight:600;margin-top:.14rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tile .det{font-size:.86rem;color:var(--muted);margin-top:.14rem}
+.tile.alert .val{color:var(--crit)}
+.scroll{overflow-x:auto;-webkit-overflow-scrolling:touch;border:1px solid var(--border);border-radius:.7rem;max-width:100%}
+.scroll.tall{max-height:min(37rem,72vh);overflow-y:auto}
+table{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums;font-size:.93rem}
+th,td{padding:.43rem .7rem;text-align:left;border-bottom:1px solid var(--grid);white-space:nowrap;vertical-align:top}
+th{font-weight:600;color:var(--text2);font-size:.86rem;background:var(--surface2);position:sticky;top:0;z-index:1}
+td.num,th.num{text-align:right}
+td.wrap{white-space:normal;min-width:13rem}
+tbody tr:last-child td{border-bottom:0}
+tr.grp td{background:var(--surface2);font-weight:600;color:var(--text);font-size:.9rem}
+tr.click{cursor:pointer}
+tr.click:hover td{background:var(--hover)}
+tr.sel td{background:var(--selwash)}
+tr.excl td{color:var(--muted)}
+tr.excl td.ord{text-decoration:line-through}
+.muted{color:var(--muted)}
+.oot{color:var(--crit);font-weight:600}
+.h3row{display:flex;align-items:baseline;justify-content:space-between;gap:.57rem .85rem;flex-wrap:wrap;margin:1.3rem 0 .57rem}
+.duo{display:grid;grid-template-columns:minmax(0,1fr);gap:0 var(--gap)}
+.issues{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:.43rem}
+.issue{display:flex;gap:.7rem;align-items:flex-start;padding:.57rem .7rem;border-radius:.57rem;background:var(--surface2)}
+.issue .txt{min-width:0}
+.lvl{font-size:.86rem;font-weight:600;white-space:nowrap;display:inline-flex;gap:.43rem;align-items:center;min-width:6.2rem;padding-top:.07rem}
+.lvl i{font-style:normal;width:1.15rem;height:1.15rem;border-radius:50%;display:inline-grid;place-items:center;font-size:.75rem;color:#fff;flex:none}
+.lvl.error i{background:var(--crit)}
+.lvl.warn i{background:var(--warn);color:#0b0b0b}
+.lvl.info i{background:var(--muted)}
+.ex{color:var(--text2);font-size:.9rem;margin-top:.14rem;word-break:break-word}
+details>summary{cursor:pointer;font-weight:600;padding:.28rem 0;list-style-position:inside}
+details>summary span{font-weight:400;color:var(--text2)}
+details[open]>summary{margin-bottom:.57rem}
+.legend{display:flex;flex-wrap:wrap;gap:.28rem 1.15rem;margin:.43rem 0 .14rem;font-size:.9rem;color:var(--text2)}
+.lg{display:inline-flex;align-items:center;gap:.43rem;background:none;border:0;padding:.2rem 0;color:inherit;font:inherit;cursor:pointer}
+.lg[aria-pressed="false"]{opacity:.45}
+.lg[aria-pressed="false"] .t{text-decoration:line-through}
+.lg.static{cursor:default}
+.lg svg{flex:none;width:1.3em;height:.87em}
+.chartbox{position:relative;min-width:0}
+.chart{display:block;touch-action:pan-y;max-width:100%}
+.chart text{font-family:inherit}
+.chart text.tick{fill:var(--muted);font-size:.79rem;font-variant-numeric:tabular-nums}
+.chart text.ann{fill:var(--text2);font-size:.79rem}
+.chart .grid line{stroke:var(--grid);stroke-width:1}
+.chart .axis{stroke:var(--axis);stroke-width:1}
+.chart .zero{stroke:var(--axis);stroke-width:1.5}
+.chart .cross{stroke:var(--text2);stroke-width:1;pointer-events:none}
+.chart .tolline,.glyph .tolline{stroke:var(--muted);stroke-width:1;stroke-dasharray:4 3;fill:none}
+.chart .tolline2,.glyph .tolline2{stroke:var(--muted);stroke-width:1;stroke-dasharray:1.5 3;fill:none}
+.chart .tolband,.glyph .tolband{fill:var(--tolband)}
+.chart:focus-visible{outline:2px solid var(--s1);outline-offset:2px;border-radius:4px}
+.chart-title{display:flex;align-items:baseline;gap:.57rem;flex-wrap:wrap}
+.charts{display:grid;grid-template-columns:minmax(0,1fr);gap:1.6rem var(--gap)}
+.tip{position:fixed;z-index:10;pointer-events:none;background:var(--surface);color:var(--text);border:1px solid var(--border);box-shadow:0 6px 24px rgba(0,0,0,.16);border-radius:.57rem;padding:.57rem .7rem;font-size:.9rem;max-width:25rem}
+.tip-title{font-weight:600;margin-bottom:.28rem}
+.tip-row{display:flex;align-items:baseline;gap:.57rem;margin:.14rem 0}
+.tip-row strong{font-variant-numeric:tabular-nums;white-space:nowrap}
+.tip-label{color:var(--text2)}
+.tip-foot{color:var(--muted);margin-top:.36rem;border-top:1px solid var(--grid);padding-top:.28rem}
+.tip-foot+.tip-foot{border-top:0;margin-top:.1rem;padding-top:0}
+.lk{display:inline-block;width:1rem;height:0;border-top:2px solid currentColor;flex:none;transform:translateY(-.2rem)}
+.lk.none{border-color:transparent}
+.k-gauss{color:var(--s1)}.k-huell{color:var(--s2)}.k-pferch{color:var(--s3)}.k-ctx{color:var(--ctx)}
+.btn{font:inherit;font-size:.93rem;padding:.43rem .85rem;border-radius:.57rem;border:1px solid var(--border);background:var(--surface);color:var(--text);cursor:pointer;white-space:nowrap}
+.btn:hover{background:var(--hover)}
+.btn:focus-visible{outline:2px solid var(--s1);outline-offset:1px}
+select{font:inherit;font-size:.93rem;padding:.43rem .57rem;border-radius:.57rem;border:1px solid var(--border);background:var(--surface);color:var(--text);max-width:100%}
+.toolbar{display:flex;gap:.57rem;flex-wrap:wrap;align-items:center}
+.empty{color:var(--muted);padding:1.7rem 0;text-align:center}
+.note{font-size:.9rem;color:var(--muted);margin:.57rem 0 0}
+.fatal{color:var(--crit)}
+input[type=checkbox]{accent-color:var(--s1);width:1.15rem;height:1.15rem;margin:0;vertical-align:middle;cursor:pointer}
+@media (max-width:600px){.card{padding:1rem .85rem}.tile .val{font-size:1.29rem}}
+/* Full HD und größer: volle Breite, Diagramme und Berichtsteile nebeneinander */
+@media (min-width:1600px){
+  :root{--gap:1.3rem}
+  .wrap{max-width:none;padding-left:1.7rem;padding-right:1.7rem}
+  .charts{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
+  .duo{grid-template-columns:minmax(0,2fr) minmax(0,3fr)}
+}
+/* 32″ 4K: Auftragsvergleich und Kennwerte nebeneinander */
+@media (min-width:2400px){
+  main{grid-template-columns:minmax(0,5fr) minmax(0,7fr)}
+  main>#loadSec,main>#reportSec,main>#batchSec,main>#profileSec{grid-column:1/-1}
+  .scroll.tall{max-height:min(48rem,74vh)}
+}
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="wrap top-inner">
+    <div class="brand">
+      <span class="logo" aria-hidden="true">−</span>
+      <div><h1>Subtracteract</h1><p>Kugelgewindetrieb · Steigung &amp; BCD</p></div>
+    </div>
+    <nav class="steps" aria-label="Arbeitsschritte">
+      <span class="step on" aria-current="step">1 · Spindel</span>
+      <span class="step" title="folgt">2 · Mutter</span>
+      <span class="step" title="folgt">3 · Paarung</span>
+    </nav>
+  </div>
+</header>
+
+<main class="wrap">
+  <section class="card" id="loadSec" aria-label="Daten laden">
+    <div class="drop" id="drop" tabindex="0" role="button" aria-label="CAQ-Export der Spindel auswählen">
+      <strong>CAQ-Export der Spindel hierher ziehen</strong>
+      <span>oder klicken zum Auswählen · .csv · mehrere Dateien möglich</span>
+      <small>Die Dateien werden nur lokal in diesem Browser gelesen – nichts wird hochgeladen.</small>
+    </div>
+    <input type="file" id="file" accept=".csv,.txt,text/csv" multiple hidden>
+    <div id="fileBar" class="filebar" hidden></div>
+  </section>
+  <section class="card" id="reportSec" hidden></section>
+  <section class="card" id="batchSec" hidden></section>
+  <section class="card" id="profileSec" hidden></section>
+  <section class="card" id="compareSec" hidden></section>
+  <section class="card" id="statsSec" hidden></section>
+</main>
+<div id="tip" class="tip" role="tooltip" hidden></div>
+
+<!-- ===================================================================
+     KERN: Einlesen (CAQ-Export) und Spindel-Charakterisierung.
+     Reine Funktionen ohne DOM – werden von tests/run-tests.js geprüft.
+     =================================================================== -->
+<script id="core">
+globalThis.SubCore = (function () {
+  'use strict';
+
+  // ---------------------------------------------------------------- Text
+  /** Bytes → Text. UTF-8 (streng), sonst Windows-1252 (typisch für Excel/Windows-Exporte). */
+  function decodeBytes(buf) {
+    const bytes = buf instanceof Uint8Array ? buf : new Uint8Array(buf);
+    let text, encoding;
+    try { text = new TextDecoder('utf-8', { fatal: true }).decode(bytes); encoding = 'UTF-8'; }
+    catch (e) { text = new TextDecoder('windows-1252').decode(bytes); encoding = 'Windows-1252'; }
+    if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
+    if (encoding === 'UTF-8' && !/[^\x00-\x7F]/.test(text)) encoding = 'ASCII';
+    return { text, encoding };
+  }
+
+  /** Trennzeichen aus der Kopfzeile bestimmen (außerhalb von Anführungszeichen gezählt). */
+  function detectDelimiter(text) {
+    const end = text.search(/\r?\n/);
+    const line = end < 0 ? text : text.slice(0, end);
+    const counts = { ';': 0, '\t': 0, ',': 0 };
+    let inQ = false;
+    for (const ch of line) {
+      if (ch === '"') inQ = !inQ;
+      else if (!inQ && ch in counts) counts[ch]++;
+    }
+    let best = ';';
+    for (const d of [';', '\t', ',']) if (counts[d] > counts[best]) best = d;
+    return best;
+  }
+
+  /** CSV nach RFC 4180 ("" als Escape, Zeilenumbrüche in Anführungszeichen, CRLF). */
+  function parseCSV(text, delim) {
+    const rows = [], lines = [];
+    let row = [], field = '', inQ = false, line = 1, rowLine = 1;
+    const n = text.length;
+    for (let i = 0; i < n; i++) {
+      const c = text[i];
+      if (inQ) {
+        if (c === '"') {
+          if (text[i + 1] === '"') { field += '"'; i++; } else inQ = false;
+        } else { if (c === '\n') line++; field += c; }
+        continue;
+      }
+      if (c === '"') inQ = true;
+      else if (c === delim) { row.push(field); field = ''; }
+      else if (c === '\n') { row.push(field); rows.push(row); lines.push(rowLine); row = []; field = ''; line++; rowLine = line; }
+      else if (c !== '\r') field += c;
+    }
+    if (field !== '' || row.length) { row.push(field); rows.push(row); lines.push(rowLine); }
+    return { rows, lines };
+  }
+
+  /** R maskiert Nicht-ASCII-Zeichen als <U+00E4>. Zurückwandeln. */
+  const R_ESC = /<U\+([0-9A-Fa-f]{4,6})>/g;
+  function decodeR(s) {
+    return s.indexOf('<U+') < 0 ? s : s.replace(R_ESC, (m, hex) => String.fromCodePoint(parseInt(hex, 16)));
+  }
+
+  const MISSING = new Set(['', 'NA', 'NaN', 'NULL', 'null', 'N/A', '#N/A']);
+  /** Zahl lesen: null = fehlt (NA/leer), NaN = nicht lesbar. Dezimalkomma wird akzeptiert. */
+  function parseNum(s) {
+    if (s == null) return null;
+    s = String(s).trim();
+    if (MISSING.has(s)) return null;
+    if (/^[+-]?\d*,\d+$/.test(s)) s = s.replace(',', '.');
+    if (!/^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/.test(s)) return NaN;
+    return Number(s);
+  }
+  function decimalsOf(s) {
+    s = String(s).trim().replace(',', '.');
+    if (/e/i.test(s)) return 0;
+    const k = s.indexOf('.');
+    return k < 0 ? 0 : s.length - k - 1;
+  }
+
+  /** Zeitstempel "JJJJ-MM-TT HH:MM:SS" oder "TT.MM.JJJJ HH:MM[:SS]" → ms (Komponenten wie gelesen, ohne Zeitzone). */
+  function parseTs(s) {
+    if (!s) return null;
+    s = String(s).trim();
+    let m, y, mo, d, H = 0, M = 0, S = 0;
+    if ((m = s.match(/^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2})(?::(\d{2}))?)?/))) {
+      y = +m[1]; mo = +m[2]; d = +m[3];
+      if (m[4]) { H = +m[4]; M = +m[5]; S = +(m[6] || 0); }
+    } else if ((m = s.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?)?/))) {
+      d = +m[1]; mo = +m[2]; y = +m[3];
+      if (m[4]) { H = +m[4]; M = +m[5]; S = +(m[6] || 0); }
+    } else return null;
+    const ms = Date.UTC(y, mo - 1, d, H, M, S);
+    return isNaN(ms) ? null : ms;
+  }
+
+  // -------------------------------------------------------------- Hinweise
+  const LEVEL_ORDER = { error: 0, warn: 1, info: 2 };
+  function Issues() { this.map = new Map(); }
+  Issues.prototype.add = function (level, code, msg, example, n) {
+    const key = level + '|' + code + '|' + msg;
+    let it = this.map.get(key);
+    if (!it) { it = { level, code, msg, count: 0, examples: [], more: 0 }; this.map.set(key, it); }
+    it.count += n == null ? 1 : n;
+    if (example != null && !it.examples.includes(example)) {
+      if (it.examples.length < 6) it.examples.push(example); else it.more++;
+    }
+    return it;
+  };
+  Issues.prototype.list = function () {
+    return [...this.map.values()].sort((a, b) => LEVEL_ORDER[a.level] - LEVEL_ORDER[b.level]);
+  };
+  Issues.prototype.merge = function (other) {
+    for (const it of other.map.values()) {
+      const t = this.add(it.level, it.code, it.msg, null, it.count);
+      for (const e of it.examples) if (!t.examples.includes(e) && t.examples.length < 6) t.examples.push(e);
+      t.more += it.more;
+    }
+    return this;
+  };
+
+  // --------------------------------------------------------- CAQ-Export
+  const COLUMNS = {
+    material: 'strMaterialNo', materialText: 'strMaterialtext', inspOrder: 'strInspectionOrder',
+    order: 'strSAPOrder', batch: 'strBatchNo', processNo: 'strProcessNo', process: 'strProcess',
+    processAll: 'strProcessAll', machine: 'strMachineText', charNo: 'strCharNo', charText: 'strCharTextEN',
+    unit: 'strUnit', position: 'strPosition', remark: 'strRemark', orderInIP: 'intOrderInIP',
+    planVersion: 'intInspectionPlanVersion', nominal: 'decNominal', lsl: 'decLTol', usl: 'decUTol',
+    value: 'value', sampleNo: 'intSampleNo', sample: 'intSample', tool: 'intTool', gauge: 'strGaugeNo',
+    measNo: 'intMeasurementNo', measNoSample: 'intMeasurementNoSample', sampleData: 'intSampleData',
+    tsUTC: 'datInspUTC', tsLocal: 'datInsp',
+  };
+  const REQUIRED = ['charText', 'position', 'value'];
+  const RECOMMENDED = ['material', 'materialText', 'batch', 'unit', 'remark', 'nominal', 'lsl', 'usl', 'tsLocal'];
+
+  /** Eine Datei lesen. Liefert Messwerte (eine Zeile = ein Wert) und Hinweise. */
+  function parseCAQ(text, fileName) {
+    const issues = new Issues();
+    const res = { fileName, delimiter: null, encoding: null, rowCount: 0, records: [], issues, header: [], fatal: null };
+    if (!text || !text.trim()) { res.fatal = 'Die Datei ist leer.'; return res; }
+    const delimiter = res.delimiter = detectDelimiter(text);
+    const { rows, lines } = parseCSV(text, delimiter);
+    const header = res.header = rows[0].map((h) => h.trim());
+    const lower = header.map((h) => h.toLowerCase());
+    const idx = {};
+    for (const [k, col] of Object.entries(COLUMNS)) idx[k] = lower.indexOf(col.toLowerCase());
+    const missing = REQUIRED.filter((k) => idx[k] < 0).map((k) => COLUMNS[k]);
+    if (idx.order < 0 && idx.inspOrder < 0) missing.push('strSAPOrder oder strInspectionOrder');
+    if (missing.length) {
+      res.fatal = 'Pflichtspalten fehlen: ' + missing.join(', ') + '. Ist das ein CAQ-Export im erwarteten Format?';
+      return res;
+    }
+    for (const k of RECOMMENDED) if (idx[k] < 0) issues.add('warn', 'col-missing', 'Spalte fehlt – Auswertung eingeschränkt', COLUMNS[k]);
+
+    const get = (row, k) => (idx[k] >= 0 && idx[k] < row.length ? row[idx[k]] : '');
+    const str = (row, k) => get(row, k).trim();
+    for (let r = 1; r < rows.length; r++) {
+      const row = rows[r];
+      if (row.length === 1 && row[0].trim() === '') continue;
+      res.rowCount++;
+      const where = 'Zeile ' + lines[r];
+      if (row.length !== header.length) issues.add('warn', 'col-count', `Zeile hat nicht ${header.length} Spalten`, `${where}: ${row.length} Spalten`);
+      const rawVal = get(row, 'value');
+      const value = parseNum(rawVal);
+      if (value === null) { issues.add('info', 'value-na', 'Messwert fehlt (NA) – Zeile übersprungen', where); continue; }
+      if (Number.isNaN(value)) { issues.add('warn', 'value-nan', 'Messwert ist keine Zahl – Zeile übersprungen', `${where}: „${rawVal}“`); continue; }
+      let order = str(row, 'order');
+      const inspOrder = str(row, 'inspOrder');
+      if (!order && inspOrder) order = inspOrder.split('/')[0].trim();
+      if (!order) { issues.add('warn', 'no-order', 'Kein Fertigungsauftrag – Zeile übersprungen', where); continue; }
+      let position = decodeR(str(row, 'position'));
+      if (!position) { issues.add('warn', 'no-pos', 'Keine Merkmalsposition – Zeile übersprungen', where); continue; }
+      if (/^\d+,\d+$/.test(position)) {
+        issues.add('warn', 'excel-pos', 'Position mit Dezimalkomma – die Datei wurde vermutlich in Excel geöffnet und gespeichert. Das Komma wird als Punkt gelesen, abgeschnittene Nullen (449.10 → 449,1) lassen sich aber nicht erkennen. Bitte den Original-Export verwenden.', position);
+        position = position.replace(',', '.');
+      }
+      const nominal = parseNum(get(row, 'nominal')), lsl = parseNum(get(row, 'lsl')), usl = parseNum(get(row, 'usl'));
+      if ([nominal, lsl, usl].some(Number.isNaN)) issues.add('warn', 'tol-nan', 'Nennmaß oder Toleranz ist keine Zahl – als fehlend behandelt', where);
+      const clean = (v) => (Number.isNaN(v) ? null : v);
+      const gauge = str(row, 'gauge');
+      const rec = {
+        file: fileName, line: lines[r],
+        material: str(row, 'material'), materialText: decodeR(str(row, 'materialText')),
+        order, inspOrder, batch: str(row, 'batch'),
+        process: str(row, 'processAll') || [str(row, 'processNo'), str(row, 'process')].filter(Boolean).join('/'),
+        machine: decodeR(str(row, 'machine')),
+        charNo: str(row, 'charNo'), charText: decodeR(str(row, 'charText')), unit: decodeR(str(row, 'unit')),
+        position, remark: decodeR(str(row, 'remark')),
+        orderInIP: clean(parseNum(get(row, 'orderInIP'))), planVersion: str(row, 'planVersion'),
+        nominal: clean(nominal), lsl: clean(lsl), usl: clean(usl),
+        value, decimals: decimalsOf(rawVal),
+        sampleNo: str(row, 'sampleNo'), sample: str(row, 'sample'), sampleData: str(row, 'sampleData'),
+        measNo: str(row, 'measNo'), measNoSample: str(row, 'measNoSample'), tool: str(row, 'tool'),
+        gauge: gauge === 'NA' ? '' : gauge,
+        tsLocal: parseTs(get(row, 'tsLocal')), tsUTC: parseTs(get(row, 'tsUTC')),
+      };
+      if (idx.gauge >= 0 && !rec.gauge) issues.add('info', 'manual', 'Messwerte ohne Messmittel-Nr. (vermutlich von Hand nachgetragen) – werden normal ausgewertet', `${order} · ${position}`);
+      res.records.push(rec);
+    }
+    if (!res.records.length) res.fatal = 'Keine verwertbaren Messwerte gefunden.';
+    return res;
+  }
+
+  // -------------------------------------------------- Merkmalszuordnung
+  const FIT = { GG: 'gauss', GN: 'huell', GX: 'pferch' };
+  const FIT_LABEL = { gauss: 'Gauss', huell: 'Hüll', pferch: 'Pferch' };
+  const TEXT_DE = {
+    diameter: 'Durchmesser', roundness: 'Rundheit', concentricity: 'Konzentrizität', runout: 'Rundlauf',
+    'total runout': 'Gesamtlauf', cylindricity: 'Zylindrizität', length: 'Länge',
+  };
+  const GROUPS = [
+    { id: 'lead', label: 'Steigung' },
+    { id: 'bcd-gauss', label: 'BCD Gauss' }, { id: 'bcd-huell', label: 'BCD Hüll' }, { id: 'bcd-pferch', label: 'BCD Pferch' },
+    { id: 'cyl', label: 'Zylindrizität Gewinde' }, { id: 'shaft', label: 'Rändel / Lage' },
+    { id: 'heat', label: 'Wärmebehandlung' }, { id: 'other', label: 'Sonstige' },
+  ];
+
+  /**
+   * Ordnet ein Merkmal der Spindel zu. Maßgeblich ist die Position (strPosition) und der
+   * englische Merkmalstext – der Prüfplantext (strRemark) wird nur für die Steigungsfenster
+   * gelesen und sonst nur gegengeprüft, weil er im Export Kopierfehler enthält.
+   */
+  function classify(c) {
+    const t = (c.charText || '').toLowerCase().trim();
+    const pos = c.position, rem = c.remark || '';
+    let m;
+    if (t === 'diameter' && (m = pos.match(/^(\d+)\.(\d+)\.(G[GNX])$/i))) {
+      const code = m[3].toUpperCase(), fit = FIT[code], gang = +m[2];
+      const out = { group: 'bcd', sub: 'bcd-' + fit, fit, gang, label: `BCD ${FIT_LABEL[fit]} · Gang ${gang}` };
+      const rm = rem.match(/\bG([GNX])\b.*?Gang\s*(\d+)/i);
+      if (rm && ('G' + rm[1].toUpperCase() !== code || +rm[2] !== gang)) out.note = `${pos}: Text „${rem}“`;
+      return out;
+    }
+    if (t === 'length' && (m = rem.match(/G\s*(\d+)\s*[-–—]\s*G\s*(\d+)/i)) && +m[2] > +m[1]) {
+      const from = +m[1], to = +m[2];
+      const out = { group: 'lead', sub: 'lead', from, to, turns: to - from, label: `Steigung G${from}–G${to}` };
+      const pm = pos.match(/^\d+\.(\d+)$/);
+      if (pm && +pm[1] !== from) out.note = `${pos}: Text „${rem}“, Position deutet auf Startgang ${+pm[1]}`;
+      return out;
+    }
+    if (t === 'cylindricity') {
+      m = pos.match(/^\d+\.(\d+)$/);
+      return m ? { group: 'cyl', sub: 'cyl', gang: +m[1], label: `Zylindrizität · Gang ${+m[1]}` }
+               : { group: 'cyl', sub: 'cyl', gang: null, label: 'Zylindrizität · Gewinde gesamt' };
+    }
+    if (t.includes('hardness')) return { group: 'heat', sub: 'heat', label: t.includes('depth') ? 'Einsatzhärtetiefe' : 'Oberflächenhärte' };
+    if (TEXT_DE[t]) return { group: 'shaft', sub: 'shaft', label: `${TEXT_DE[t]} ${pos}`, unclearLead: t === 'length' };
+    return { group: 'other', sub: 'other', label: `${c.charText || 'Merkmal'} ${pos}` };
+  }
+
+  const inc = (map, k) => map.set(k, (map.get(k) || 0) + 1);
+  const mode = (map) => { let best, bn = -1; for (const [k, n] of map) if (n > bn) { best = k; bn = n; } return best; };
+  const mean = (a) => (a.length ? a.reduce((s, v) => s + v, 0) / a.length : null);
+  const fmtDay = (ms) => { const d = new Date(ms); return `${String(d.getUTCDate()).padStart(2, '0')}.${String(d.getUTCMonth() + 1).padStart(2, '0')}.${d.getUTCFullYear()}`; };
+
+  /** Dateien zusammenführen, Dubletten entfernen, nach Material/Prozess trennen, Merkmale und Aufträge katalogisieren. */
+  function buildModel(files) {
+    const issues = new Issues();
+    const seen = new Set();
+    const records = [];
+    let dup = 0;
+    for (const f of files) {
+      if (f.fatal) issues.add('error', 'fatal', f.fatal, f.fileName);
+      for (const r of f.records || []) {
+        const key = [r.order, r.position, r.sampleNo, r.sample, r.sampleData, r.measNo, r.measNoSample, r.tsUTC ?? r.tsLocal, r.value].join('|');
+        if (seen.has(key)) { dup++; continue; }
+        seen.add(key);
+        records.push(r);
+      }
+    }
+    if (dup) issues.add('info', 'dup', 'Doppelte Messwerte entfernt (gleicher Wert, gleiches Merkmal, gleicher Zeitpunkt – z. B. überlappende Exporte)', null, dup);
+
+    const groups = new Map();
+    for (const r of records) {
+      const k = r.material + '\u0001' + r.process;
+      let g = groups.get(k);
+      if (!g) groups.set(k, (g = { id: k, material: r.material, process: r.process, texts: new Map(), records: [] }));
+      g.records.push(r);
+      inc(g.texts, r.materialText);
+    }
+    const datasets = [...groups.values()].sort((a, b) => b.records.length - a.records.length);
+    if (datasets.length > 1) issues.add('warn', 'multi-ds', 'Die Daten enthalten mehrere Material/Prozess-Kombinationen. Ausgewertet wird immer nur eine – Auswahl im Einlesebericht.', null, datasets.length);
+    for (const ds of datasets) {
+      ds.materialText = mode(ds.texts) || '';
+      ds.issues = new Issues();
+      analyseDataset(ds, ds.issues);
+    }
+    return { records, datasets, issues };
+  }
+
+  function analyseDataset(ds, issues) {
+    if (ds.materialText && !/spindel|spindle/i.test(ds.materialText)) {
+      issues.add('warn', 'not-spindle', 'Materialtext enthält nicht „Spindel“ – ist das wirklich der Spindel-Export?', `${ds.material}: ${ds.materialText}`);
+    }
+    const chars = new Map();
+    const versions = new Map();
+    let tMin = Infinity, tMax = -Infinity;
+    for (const r of ds.records) {
+      let c = chars.get(r.position);
+      if (!c) {
+        c = { position: r.position, charNos: new Map(), texts: new Map(), units: new Map(), remarks: new Map(), tolVariants: new Map(), orderInIP: r.orderInIP, n: 0, decimals: 0, orders: new Set() };
+        chars.set(r.position, c);
+      }
+      c.n++;
+      inc(c.charNos, r.charNo); inc(c.texts, r.charText); inc(c.units, r.unit); inc(c.remarks, r.remark);
+      inc(c.tolVariants, JSON.stringify([r.nominal, r.lsl, r.usl]));
+      c.decimals = Math.max(c.decimals, r.decimals);
+      c.orders.add(r.order);
+      if (r.orderInIP != null && (c.orderInIP == null || r.orderInIP < c.orderInIP)) c.orderInIP = r.orderInIP;
+      if (r.planVersion) inc(versions, r.planVersion);
+      const t = r.tsLocal ?? r.tsUTC;
+      if (t != null) { if (t < tMin) tMin = t; if (t > tMax) tMax = t; }
+    }
+    ds.period = tMin <= tMax ? [tMin, tMax] : null;
+    if (versions.size > 1) issues.add('info', 'plan-versions', 'Daten aus mehreren Prüfplanversionen', [...versions.keys()].join(', '));
+
+    for (const c of chars.values()) {
+      c.charNo = mode(c.charNos); c.charText = mode(c.texts); c.unit = mode(c.units); c.remark = mode(c.remarks);
+      [c.nominal, c.lsl, c.usl] = JSON.parse(mode(c.tolVariants));
+      if (c.tolVariants.size > 1) {
+        issues.add('warn', 'tol-var', 'Nennmaß/Toleranz ändert sich innerhalb der Daten. „Außerhalb Toleranz“ wird je Messwert mit dessen eigener Toleranz bewertet; angezeigt wird die häufigste.', `${c.position} (${c.tolVariants.size} Varianten)`);
+      }
+      if (c.texts.size > 1 || c.charNos.size > 1) issues.add('warn', 'pos-ambig', 'Position gehört zu mehreren Merkmalen', `${c.position}: ${[...c.texts.keys()].join(' / ')}`);
+      c.cls = classify(c);
+      if (c.cls.note) issues.add('info', 'remark-mismatch', 'Prüfplantext passt nicht zur Position – zugeordnet wird über die Position', c.cls.note);
+      if (c.cls.unclearLead) issues.add('warn', 'lead-unknown', 'Längenmerkmal ohne erkennbares Steigungsfenster („G1-G7“) im Prüfplantext – als Einzelmerkmal geführt', `${c.position}: „${c.remark}“`);
+    }
+    const gi = Object.fromEntries(GROUPS.map((g, i) => [g.id, i]));
+    ds.chars = [...chars.values()].sort((a, b) => (a.orderInIP ?? 1e9) - (b.orderInIP ?? 1e9) || a.position.localeCompare(b.position));
+    ds.charsGrouped = [...ds.chars].sort((a, b) => gi[a.cls.sub] - gi[b.cls.sub] || (a.cls.gang ?? a.cls.from ?? 1e9) - (b.cls.gang ?? b.cls.from ?? 1e9) || (a.orderInIP ?? 1e9) - (b.orderInIP ?? 1e9));
+    ds.charMap = chars;
+
+    const batches = new Map();
+    const batchToOrders = new Map();
+    for (const r of ds.records) {
+      let b = batches.get(r.order);
+      if (!b) batches.set(r.order, (b = { order: r.order, batchNos: new Map(), first: Infinity, last: -Infinity, n: 0 }));
+      b.n++;
+      if (r.batch) {
+        inc(b.batchNos, r.batch);
+        if (!batchToOrders.has(r.batch)) batchToOrders.set(r.batch, new Set());
+        batchToOrders.get(r.batch).add(r.order);
+      }
+      const t = r.tsLocal ?? r.tsUTC;
+      if (t != null) { if (t < b.first) b.first = t; if (t > b.last) b.last = t; }
+    }
+    for (const b of batches.values()) {
+      b.batchNo = [...b.batchNos.keys()].join(', ');
+      if (b.batchNos.size > 1) issues.add('warn', 'order-multi-batch', 'Fertigungsauftrag mit mehreren Chargennummern', `${b.order}: ${b.batchNo}`);
+      if (!isFinite(b.first)) { b.first = null; b.last = null; }
+      b.missing = ds.chars.filter((c) => c.cls.group !== 'heat' && !c.orders.has(b.order)).map((c) => c.position);
+      if (b.missing.length) issues.add('warn', 'incomplete', 'Fertigungsauftrag ohne Werte für einzelne Merkmale', `${b.order}: ${b.missing.slice(0, 5).join(', ')}${b.missing.length > 5 ? ' …' : ''}`);
+    }
+    for (const [bn, os] of batchToOrders) if (os.size > 1) issues.add('warn', 'batch-multi-order', 'Chargennummer in mehreren Fertigungsaufträgen', `${bn}: ${[...os].join(', ')}`);
+    ds.batches = [...batches.values()].sort((a, b) => (a.first ?? 0) - (b.first ?? 0) || a.order.localeCompare(b.order));
+    ds.periodLabel = ds.period ? `${fmtDay(ds.period[0])} – ${fmtDay(ds.period[1])}` : '–';
+  }
+
+  // ---------------------------------------------------------- Statistik
+  const EPS = 1e-9;
+  /** Kennwerte einer Werteliste. Außerhalb-Toleranz je Messwert mit dessen eigener Toleranz. */
+  function describe(recs) {
+    const n = recs.length;
+    if (!n) return null;
+    let sum = 0, min = Infinity, max = -Infinity, below = 0, above = 0;
+    const values = new Array(n);
+    for (let i = 0; i < n; i++) {
+      const r = recs[i], v = r.value;
+      values[i] = v; sum += v;
+      if (v < min) min = v;
+      if (v > max) max = v;
+      if (r.lsl != null && v < r.lsl - EPS) below++;
+      if (r.usl != null && v > r.usl + EPS) above++;
+    }
+    const mu = sum / n;
+    let ss = 0;
+    for (const v of values) ss += (v - mu) * (v - mu);
+    return { n, mean: mu, sd: n > 1 ? Math.sqrt(ss / (n - 1)) : null, min, max, range: max - min, below, above, values };
+  }
+
+  /** Spindel-Kennwerte aus den Merkmalsstatistiken einer Einheit (Batch oder gepoolt). */
+  function summarize(ds, chars) {
+    const gangs = new Map();
+    const gaussVals = [];
+    let nominal = null;
+    for (const c of ds.chars) {
+      if (c.cls.group !== 'bcd') continue;
+      const st = chars.get(c.position);
+      if (!st) continue;
+      let g = gangs.get(c.cls.gang);
+      if (!g) gangs.set(c.cls.gang, (g = { gang: c.cls.gang }));
+      g[c.cls.fit] = { char: c, stats: st };
+      if (c.cls.fit === 'gauss') { for (const v of st.values) gaussVals.push(v); if (nominal == null) nominal = c.nominal; }
+    }
+    const profile = [...gangs.values()].sort((a, b) => a.gang - b.gang);
+    const gMeans = profile.filter((g) => g.gauss).map((g) => g.gauss.stats.mean);
+    const form = profile.filter((g) => g.huell && g.pferch).map((g) => g.huell.stats.mean - g.pferch.stats.mean);
+    const windows = ds.chars
+      .filter((c) => c.cls.group === 'lead' && chars.get(c.position))
+      .map((c) => {
+        const st = chars.get(c.position);
+        return { char: c, stats: st, from: c.cls.from, to: c.cls.to, turns: c.cls.turns, pitch: st.mean / c.cls.turns, nominalPitch: c.nominal != null ? c.nominal / c.cls.turns : null };
+      })
+      .sort((a, b) => a.from - b.from);
+    const wMeans = windows.map((w) => w.stats.mean);
+    let oot = 0, nPerChar = 0;
+    const ootChars = [];
+    for (const c of ds.chars) {
+      const st = chars.get(c.position);
+      if (!st) continue;
+      if (st.below + st.above) { oot += st.below + st.above; ootChars.push(c.position); }
+      if (c.cls.group !== 'heat') nPerChar = Math.max(nPerChar, st.n);
+    }
+    const sh = ds.chars.find((c) => c.cls.group === 'heat' && c.cls.label === 'Oberflächenhärte');
+    return {
+      bcd: {
+        profile, nominal,
+        gaussMean: mean(gaussVals), gaussN: gaussVals.length,
+        profileRange: gMeans.length > 1 ? Math.max(...gMeans) - Math.min(...gMeans) : null,
+        formMean: form.length ? mean(form) : null, formN: form.length,
+      },
+      lead: {
+        windows,
+        pitchMean: windows.length ? mean(windows.map((w) => w.pitch)) : null,
+        nominalPitch: windows.length ? windows[0].nominalPitch : null,
+        spread: wMeans.length > 1 ? Math.max(...wMeans) - Math.min(...wMeans) : null,
+      },
+      oot, ootChars, nPerChar,
+      hardness: sh ? chars.get(sh.position) || null : null,
+      hardnessUnit: sh ? sh.unit : null,
+    };
+  }
+
+  /**
+   * Charakterisierung je Fertigungsauftrag (Batch) und gepoolt über alle einbezogenen.
+   * Einzelteile werden bewusst nicht unterschieden – gepaart wird auf Batch-Ebene.
+   */
+  function characterize(ds, included) {
+    const perOrder = new Map();
+    const pooledRecs = new Map();
+    for (const r of ds.records) {
+      let m = perOrder.get(r.order);
+      if (!m) perOrder.set(r.order, (m = new Map()));
+      if (!m.has(r.position)) m.set(r.position, []);
+      m.get(r.position).push(r);
+      if (included.has(r.order)) {
+        if (!pooledRecs.has(r.position)) pooledRecs.set(r.position, []);
+        pooledRecs.get(r.position).push(r);
+      }
+    }
+    const units = new Map();
+    for (const b of ds.batches) {
+      const chars = new Map();
+      for (const [pos, recs] of perOrder.get(b.order) || []) chars.set(pos, describe(recs));
+      units.set(b.order, { id: b.order, batch: b, included: included.has(b.order), chars, summary: summarize(ds, chars) });
+    }
+    const pc = new Map();
+    for (const [pos, recs] of pooledRecs) pc.set(pos, describe(recs));
+    const nInc = ds.batches.filter((b) => included.has(b.order)).length;
+    return {
+      units, order: ds.batches.map((b) => b.order), nIncluded: nInc,
+      pooled: { id: 'ALL', batch: null, included: true, pooled: true, chars: pc, summary: summarize(ds, pc) },
+    };
+  }
+
+  /** Kennwerte als CSV für Excel (Semikolon, Dezimalkomma). */
+  function exportCSV(ds, res) {
+    const dec = (v) => (v == null || !isFinite(v) ? '' : String(+v.toPrecision(12)).replace('.', ','));
+    const txt = (s) => { s = s == null ? '' : String(s); return /[;"\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
+    const head = ['Material', 'Prozess', 'Einheit', 'Fertigungsauftrag', 'Charge', 'einbezogen', 'Position', 'Merkmal', 'Gruppe', 'Gang', 'Masseinheit', 'Nennmass', 'UGW', 'OGW', 'n', 'Mittelwert', 's', 'Min', 'Max', 'n_unter_UGW', 'n_ueber_OGW'];
+    const out = [head.join(';')];
+    const gl = Object.fromEntries(GROUPS.map((g) => [g.id, g.label]));
+    const units = [res.pooled, ...res.order.map((o) => res.units.get(o))];
+    for (const u of units) {
+      for (const c of ds.charsGrouped) {
+        const st = u.chars.get(c.position);
+        if (!st) continue;
+        out.push([
+          txt(ds.material), txt(ds.process), u.pooled ? `gepoolt (${res.nIncluded} Aufträge)` : 'Batch',
+          txt(u.pooled ? '' : u.id), txt(u.pooled ? '' : u.batch.batchNo), u.included ? 'ja' : 'nein',
+          txt(c.position), txt(c.cls.label), txt(gl[c.cls.sub]), c.cls.gang ?? (c.cls.from != null ? `${c.cls.from}-${c.cls.to}` : ''),
+          txt(c.unit), dec(c.nominal), dec(c.lsl), dec(c.usl), st.n, dec(st.mean), dec(st.sd), dec(st.min), dec(st.max), st.below, st.above,
+        ].join(';'));
+      }
+    }
+    return out.join('\r\n') + '\r\n';
+  }
+
+  return {
+    decodeBytes, detectDelimiter, parseCSV, decodeR, parseNum, decimalsOf, parseTs,
+    Issues, parseCAQ, classify, buildModel, describe, summarize, characterize, exportCSV,
+    GROUPS, FIT_LABEL, fmtDay,
+  };
+})();
+</script>
+
+<!-- ===================================================================
+     OBERFLÄCHE
+     =================================================================== -->
+<script id="app">
+(function () {
+  'use strict';
+  const C = globalThis.SubCore;
+  const $ = (id) => document.getElementById(id);
+  const LS_KEY = 'subtracteract.spindel.excluded.v1';
+  const SVGNS = 'http://www.w3.org/2000/svg';
+  const FITS = ['gauss', 'huell', 'pferch'];
+
+  const state = {
+    files: [], model: null, dsId: null, ds: null, res: null,
+    excluded: loadExcluded(), sel: 'ALL', cmp: null, mapOpen: false,
+    show: { gauss: true, huell: true, pferch: true, ctx: true },
+  };
+
+  function loadExcluded() { try { return new Set(JSON.parse(localStorage.getItem(LS_KEY) || '[]')); } catch (e) { return new Set(); } }
+  function saveExcluded() { try { localStorage.setItem(LS_KEY, JSON.stringify([...state.excluded])); } catch (e) { /* ohne Speicher weiter */ } }
+
+  // ------------------------------------------------------------ Helfer
+  function h(tag, attrs, ...children) {
+    const e = document.createElement(tag);
+    if (attrs) for (const [k, v] of Object.entries(attrs)) {
+      if (v == null || v === false) continue;
+      if (k === 'class') e.className = v;
+      else if (k === 'text') e.textContent = v;
+      else if (k.startsWith('on')) e.addEventListener(k.slice(2), v);
+      else e.setAttribute(k, v === true ? '' : v);
+    }
+    for (const c of children.flat(Infinity)) if (c != null && c !== false) e.append(c instanceof Node ? c : String(c));
+    return e;
+  }
+  function s(tag, attrs, parent) {
+    const e = document.createElementNS(SVGNS, tag);
+    if (attrs) for (const k in attrs) if (attrs[k] != null) e.setAttribute(k, attrs[k]);
+    if (parent) parent.appendChild(e);
+    return e;
+  }
+  const NF = {};
+  const nf = (d) => NF[d] || (NF[d] = new Intl.NumberFormat('de-DE', { minimumFractionDigits: d, maximumFractionDigits: d }));
+  function fmt(v, d) {
+    if (v == null || !isFinite(v)) return '–';
+    if (Math.abs(v) < 0.5 * Math.pow(10, -d)) v = 0;
+    return (v < 0 ? '−' : '') + nf(d).format(Math.abs(v));
+  }
+  function fmtS(v, d) {
+    if (v == null || !isFinite(v)) return '–';
+    if (Math.abs(v) < 0.5 * Math.pow(10, -d)) return '±' + nf(d).format(0);
+    return (v > 0 ? '+' : '−') + nf(d).format(Math.abs(v));
+  }
+  const um = (mm) => (mm == null ? null : mm * 1000);
+  const fmtDay = (ms) => (ms == null ? '–' : C.fmtDay(ms));
+  const tolText = (c, d) => (c.lsl != null && c.usl != null ? `${fmt(c.lsl, d)} … ${fmt(c.usl, d)}` : c.usl != null ? `≤ ${fmt(c.usl, d)}` : c.lsl != null ? `≥ ${fmt(c.lsl, d)}` : 'ohne Toleranz');
+  const selUnit = () => (state.sel === 'ALL' ? state.res.pooled : state.res.units.get(state.sel));
+  const unitTitle = (u) => (u.pooled ? `Alle einbezogenen Fertigungsaufträge (gepoolt, ${state.res.nIncluded})` : `Fertigungsauftrag ${u.id} · Charge ${u.batch.batchNo || '–'}`);
+
+  // ------------------------------------------------------------ Laden
+  const drop = $('drop'), input = $('file');
+  drop.addEventListener('click', () => input.click());
+  drop.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); input.click(); } });
+  input.addEventListener('change', () => { addFiles(input.files); input.value = ''; });
+  ['dragenter', 'dragover'].forEach((t) => window.addEventListener(t, (e) => { e.preventDefault(); drop.classList.add('over'); }));
+  ['dragleave', 'dragend'].forEach((t) => window.addEventListener(t, (e) => { if (!e.relatedTarget) drop.classList.remove('over'); }));
+  window.addEventListener('drop', (e) => { e.preventDefault(); drop.classList.remove('over'); if (e.dataTransfer && e.dataTransfer.files.length) addFiles(e.dataTransfer.files); });
+
+  async function addFiles(fileList) {
+    for (const f of [...fileList]) {
+      let parsed;
+      try {
+        const { text, encoding } = C.decodeBytes(await f.arrayBuffer());
+        parsed = C.parseCAQ(text, f.name);
+        parsed.encoding = encoding;
+      } catch (err) {
+        parsed = { fileName: f.name, fatal: 'Datei konnte nicht gelesen werden: ' + err.message, records: [], issues: new C.Issues(), rowCount: 0 };
+      }
+      parsed.size = f.size;
+      state.files = state.files.filter((x) => x.fileName !== f.name); // gleicher Name = neuere Fassung
+      state.files.push(parsed);
+    }
+    rebuild();
+  }
+  function reset() { state.files = []; state.sel = 'ALL'; rebuild(); }
+
+  function rebuild() {
+    state.model = state.files.length ? C.buildModel(state.files) : null;
+    const dss = state.model ? state.model.datasets : [];
+    if (!dss.some((d) => d.id === state.dsId)) state.dsId = dss.length ? dss[0].id : null;
+    recompute(true);
+  }
+  function recompute(withReport) {
+    state.ds = (state.model && state.model.datasets.find((d) => d.id === state.dsId)) || null;
+    state.res = null;
+    if (state.ds) {
+      const inc = new Set(state.ds.batches.map((b) => b.order).filter((o) => !state.excluded.has(o)));
+      state.res = C.characterize(state.ds, inc);
+      if (state.sel !== 'ALL' && !state.res.units.has(state.sel)) state.sel = 'ALL';
+      if (!state.cmp || !state.ds.charMap.has(state.cmp)) {
+        const first = state.ds.charsGrouped.find((c) => c.cls.group === 'lead') || state.ds.charsGrouped[0];
+        state.cmp = first ? first.position : null;
+      }
+    }
+    if (withReport) { renderFileBar(); renderReport(); }
+    renderAnalysis();
+  }
+
+  // ------------------------------------------------------------ Dateileiste
+  function renderFileBar() {
+    const bar = $('fileBar');
+    drop.classList.toggle('compact', state.files.length > 0);
+    drop.querySelector('strong').textContent = state.files.length ? 'Weitere Datei hinzufügen' : 'CAQ-Export der Spindel hierher ziehen';
+    if (!state.files.length) { bar.hidden = true; return; }
+    bar.hidden = false;
+    bar.replaceChildren(
+      h('div', { class: 'names' }, 'Geladen:', state.files.map((f) => h('span', { class: 'chip', title: f.fatal || '', text: f.fileName }))),
+      h('button', { class: 'btn', type: 'button', onclick: reset, text: 'Zurücksetzen' }),
+    );
+  }
+
+  // ------------------------------------------------------------ Einlesebericht
+  function levelBadge(level) {
+    const map = { error: ['✕', 'Fehler'], warn: ['!', 'Warnung'], info: ['i', 'Hinweis'] };
+    return h('span', { class: 'lvl ' + level }, h('i', { 'aria-hidden': 'true', text: map[level][0] }), map[level][1]);
+  }
+  function tile(label, value, det, alert) {
+    return h('div', { class: 'tile' + (alert ? ' alert' : '') }, h('div', { class: 'lbl', text: label }), h('div', { class: 'val', text: value, title: value }), det ? h('div', { class: 'det', text: det }) : null);
+  }
+
+  function renderReport() {
+    const sec = $('reportSec');
+    if (!state.files.length) { sec.hidden = true; sec.replaceChildren(); return; }
+    sec.hidden = false;
+    const model = state.model, ds = state.ds;
+    const head = h('div', { class: 'sec-head' },
+      h('div', null, h('h2', { text: 'Einlesebericht' }), h('p', { class: 'sub', text: 'Prüfe hier zuerst, ob die Daten so verstanden wurden, wie sie gemeint sind.' })));
+    if (model && model.datasets.length > 1) {
+      const sel = h('select', { 'aria-label': 'Material und Prozess', onchange: (e) => { state.dsId = e.target.value; state.sel = 'ALL'; recompute(true); } },
+        model.datasets.map((d) => { const o = h('option', { value: d.id, text: `${d.material} · ${d.materialText} · ${d.process} (${d.records.length} Werte)` }); if (d.id === state.dsId) o.selected = true; return o; }));
+      head.append(h('div', { class: 'toolbar' }, h('label', { text: 'Auswerten:' }), sel));
+    }
+    const parts = [head];
+
+    if (ds) {
+      const groups = {};
+      for (const c of ds.chars) groups[c.cls.sub] = (groups[c.cls.sub] || 0) + 1;
+      const nBcd = (groups['bcd-gauss'] || 0) + (groups['bcd-huell'] || 0) + (groups['bcd-pferch'] || 0);
+      parts.push(h('div', { class: 'tiles' },
+        tile('Material', ds.material || '–', ds.materialText),
+        tile('Prozess', ds.process || '–', ds.periodLabel),
+        tile('Fertigungsaufträge', String(ds.batches.length), `${new Set(ds.batches.map((b) => b.batchNo)).size} Chargen`),
+        tile('Merkmale', String(ds.chars.length), `${groups.lead || 0} Steigung · ${nBcd} BCD · ${groups.cyl || 0} Zyl.`),
+        tile('Messwerte', nf(0).format(ds.records.length), `aus ${state.files.filter((f) => !f.fatal).length} Datei(en)`),
+      ));
+    }
+
+    // Dateien | Hinweise (ab Full HD nebeneinander)
+    const colFiles = h('div'), colIssues = h('div');
+    parts.push(h('div', { class: 'duo' }, colFiles, colIssues));
+    colFiles.append(h('div', { class: 'h3row' }, h('h3', { text: 'Dateien' })));
+    colFiles.append(h('div', { class: 'scroll' }, h('table', null,
+      h('thead', null, h('tr', null, ['Datei', 'Zeilen', 'Messwerte', 'Kodierung', 'Trennzeichen', 'Status'].map((t, i) => h('th', { class: i && i < 3 ? 'num' : null, text: t })))),
+      h('tbody', null, state.files.map((f) => h('tr', null,
+        h('td', { text: f.fileName }),
+        h('td', { class: 'num', text: nf(0).format(f.rowCount || 0) }),
+        h('td', { class: 'num', text: nf(0).format(f.records ? f.records.length : 0) }),
+        h('td', { text: f.encoding || '–' }),
+        h('td', { text: f.delimiter === '\t' ? 'Tab' : f.delimiter || '–' }),
+        h('td', { class: f.fatal ? 'fatal' : null, text: f.fatal || 'gelesen' }),
+      ))))));
+
+    // Hinweise
+    const all = new C.Issues();
+    for (const f of state.files) if (f.issues) all.merge(f.issues);
+    if (model) all.merge(model.issues);
+    if (ds) all.merge(ds.issues);
+    const list = all.list();
+    colIssues.append(h('div', { class: 'h3row' }, h('h3', { text: `Hinweise zum Einlesen (${list.length})` })));
+    if (!list.length) colIssues.append(h('p', { class: 'muted', text: 'Keine Auffälligkeiten.' }));
+    else colIssues.append(h('ul', { class: 'issues' }, list.map((it) => h('li', { class: 'issue' },
+      levelBadge(it.level),
+      h('div', { class: 'txt' },
+        h('div', null, it.msg, it.count > 1 ? h('span', { class: 'muted', text: ` · ${nf(0).format(it.count)}×` }) : null),
+        it.examples.length ? h('div', { class: 'ex', text: it.examples.join(' · ') + (it.more ? ` · +${it.more} weitere` : '') }) : null)))));
+
+    // Merkmalszuordnung
+    if (ds) {
+      const det = h('details', { ontoggle: (e) => { state.mapOpen = e.target.open; } },
+        h('summary', null, 'Merkmalszuordnung ', h('span', { text: `· ${ds.chars.length} Merkmale – so ordnet die App jedes Merkmal ein` })),
+        h('div', { class: 'scroll tall' }, h('table', null,
+          h('thead', null, h('tr', null, ['Pos.', 'Merkmal (CAQ)', 'Prüfplantext', 'Erkannt als', 'Einheit', 'Nennmaß', 'UGW', 'OGW', 'Werte', 'Aufträge'].map((t, i) => h('th', { class: i >= 5 ? 'num' : null, text: t })))),
+          h('tbody', null, ds.chars.map((c) => h('tr', null,
+            h('td', { text: c.position }),
+            h('td', { text: c.charText }),
+            h('td', { class: 'wrap', text: c.remark || '–' }),
+            h('td', null, c.cls.label, c.cls.note ? h('span', { class: 'muted', title: 'Prüfplantext widerspricht der Position', text: ' ⓘ Text abweichend' }) : null),
+            h('td', { text: c.unit }),
+            h('td', { class: 'num', text: fmt(c.nominal, c.decimals) }),
+            h('td', { class: 'num', text: fmt(c.lsl, c.decimals) }),
+            h('td', { class: 'num', text: fmt(c.usl, c.decimals) }),
+            h('td', { class: 'num', text: nf(0).format(c.n) }),
+            h('td', { class: 'num', text: String(c.orders.size) }),
+          ))))),
+        h('p', { class: 'note', text: 'Regeln: BCD = „diameter“ mit Position NNN.GG.Gx (GG = Gauss, GN = Hüll, GX = Pferch, mittlere Zahl = Gang). Steigung = „length“ mit Fenster „G1-G7“ im Prüfplantext. Zylindrizität mit Positionsendung = je Gang, sonst gesamt. Der Prüfplantext wird sonst nur gegengeprüft.' }));
+      det.open = state.mapOpen;
+      parts.push(h('div', { style: 'margin-top:16px' }, det));
+    }
+    sec.replaceChildren(...parts);
+  }
+
+  // ------------------------------------------------------------ Analyse
+  function renderAnalysis() {
+    const ids = ['batchSec', 'profileSec', 'compareSec', 'statsSec'];
+    if (!state.ds || !state.res) { ids.forEach((id) => { $(id).hidden = true; $(id).replaceChildren(); }); return; }
+    ids.forEach((id) => { $(id).hidden = false; });
+    renderBatches();
+    renderProfile();
+    renderCompare();
+    renderStats();
+  }
+  function select(id) { state.sel = id; renderAnalysis(); }
+
+  // ------------------------------------------------------------ Batches
+  function renderBatches() {
+    const sec = $('batchSec'), ds = state.ds, res = state.res;
+    const bcdNom = (res.pooled.summary.bcd.nominal ?? ds.chars.find((c) => c.cls.group === 'bcd')?.nominal) ?? null;
+    const shUnit = res.pooled.summary.hardnessUnit || '';
+    const row = (u) => {
+      const sm = u.summary, isAll = !!u.pooled;
+      const tr = h('tr', {
+        class: ['click', state.sel === u.id ? 'sel' : '', !u.included ? 'excl' : ''].join(' '),
+        'aria-selected': state.sel === u.id ? 'true' : 'false', tabindex: 0,
+        onclick: () => select(u.id), onkeydown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); select(u.id); } },
+      });
+      const cb = isAll ? h('span', { class: 'muted', text: '' }) : h('input', {
+        type: 'checkbox', 'aria-label': `Fertigungsauftrag ${u.id} einbeziehen`,
+        onclick: (e) => e.stopPropagation(), onkeydown: (e) => e.stopPropagation(),
+        onchange: (e) => { if (e.target.checked) state.excluded.delete(u.id); else state.excluded.add(u.id); saveExcluded(); recompute(false); },
+      });
+      if (!isAll) cb.checked = u.included;
+      const g = sm.bcd.gaussMean;
+      tr.append(
+        h('td', null, cb),
+        h('td', { class: 'ord' }, isAll ? h('strong', { text: 'Alle einbezogenen (gepoolt)' }) : u.id),
+        h('td', { text: isAll ? `${res.nIncluded} von ${ds.batches.length}` : u.batch.batchNo || '–' }),
+        h('td', { text: isAll ? ds.periodLabel : fmtDay(u.batch.first) }),
+        h('td', { class: 'num', text: sm.nPerChar ? String(sm.nPerChar) : '–' }),
+        h('td', { class: 'num', text: fmt(g, 4) }),
+        h('td', { class: 'num', text: g != null && bcdNom != null ? fmtS(um(g - bcdNom), 1) : '–' }),
+        h('td', { class: 'num', text: fmt(sm.lead.pitchMean, 5) }),
+        h('td', { class: 'num' + (sm.oot ? ' oot' : ''), title: sm.ootChars.join(', '), text: sm.oot ? `⚠ ${sm.oot}` : '0' }),
+        h('td', { class: 'num', text: sm.hardness ? fmt(sm.hardness.mean, 0) : '–' }),
+      );
+      return tr;
+    };
+    const units = res.order.map((o) => res.units.get(o));
+    sec.replaceChildren(
+      h('div', { class: 'sec-head' },
+        h('div', null, h('h2', { text: 'Fertigungsaufträge' }),
+          h('p', { class: 'sub', text: 'Ausgewertet wird je Fertigungsauftrag (Batch) – Einzelteile werden nicht unterschieden. Zeile anklicken = Auswahl für die Ansichten unten. Haken entfernen = Auftrag aus der gepoolten Auswertung nehmen (wird in diesem Browser gemerkt).' })),
+        h('div', { class: 'toolbar' },
+          ds.batches.some((b) => state.excluded.has(b.order)) ? h('button', { class: 'btn', type: 'button', onclick: () => { ds.batches.forEach((b) => state.excluded.delete(b.order)); saveExcluded(); recompute(false); }, text: 'Alle einbeziehen' }) : null)),
+      h('div', { class: 'scroll' }, h('table', null,
+        h('thead', null, h('tr', null,
+          h('th', { text: 'Einb.' }), h('th', { text: 'Fertigungsauftrag' }), h('th', { text: 'Charge' }), h('th', { text: 'Prüfdatum' }),
+          h('th', { class: 'num', text: 'n je Merkmal' }), h('th', { class: 'num', text: 'BCD Gauss x̄ [mm]' }), h('th', { class: 'num', text: 'Δ Nenn [µm]' }),
+          h('th', { class: 'num', text: 'Steigung p̄ [mm]' }), h('th', { class: 'num', text: 'Werte außerh. Tol.' }), h('th', { class: 'num', text: `Härte x̄ [${shUnit || '–'}]` }))),
+        h('tbody', null, row(res.pooled), units.map(row)))),
+    );
+  }
+
+  // ------------------------------------------------------------ Profil
+  function gangDomain() {
+    const g = [];
+    for (const c of state.ds.chars) {
+      if (c.cls.group === 'bcd') g.push(c.cls.gang);
+      if (c.cls.group === 'lead') g.push(c.cls.from, c.cls.to);
+    }
+    return g.length ? [Math.min(...g) - 0.6, Math.max(...g) + 0.6] : [0, 1];
+  }
+
+  function renderProfile() {
+    const sec = $('profileSec'), ds = state.ds, u = selUnit();
+    const sm = u.summary, b = sm.bcd, l = sm.lead;
+    const hasBcd = ds.chars.some((c) => c.cls.group === 'bcd'), hasLead = ds.chars.some((c) => c.cls.group === 'lead');
+    const head = h('div', { class: 'sec-head' }, h('div', null, h('h2', { text: 'Spindel-Steckbrief' }), h('p', { class: 'sub', text: unitTitle(u) })));
+    if (!hasBcd && !hasLead) {
+      sec.replaceChildren(head, h('p', { class: 'empty', text: 'In diesen Daten wurden keine BCD- oder Steigungsmerkmale erkannt. Ist das ein Spindel-Export? Siehe Merkmalszuordnung im Einlesebericht.' }));
+      return;
+    }
+    if (u.pooled && !state.res.nIncluded) {
+      sec.replaceChildren(head, h('p', { class: 'empty', text: 'Kein Fertigungsauftrag einbezogen.' }));
+      return;
+    }
+    const nomP = l.nominalPitch;
+    const tiles = h('div', { class: 'tiles' },
+      tile('BCD Gauss x̄', b.gaussMean != null ? `${fmt(b.gaussMean, 4)} mm` : '–', b.gaussMean != null && b.nominal != null ? `${fmtS(um(b.gaussMean - b.nominal), 1)} µm zum Nennmaß · ${b.gaussN} Werte` : null),
+      tile('BCD-Verlauf über Gänge', b.profileRange != null ? `${fmt(um(b.profileRange), 1)} µm` : '–', 'Spanne der Gang-Mittelwerte (Gauss)'),
+      tile('Hüll − Pferch x̄', b.formMean != null ? `${fmt(um(b.formMean), 1)} µm` : '–', b.formN ? `Mittel über ${b.formN} Gänge` : null),
+      tile('Steigung p̄', l.pitchMean != null ? `${fmt(l.pitchMean, 5)} mm` : '–', l.pitchMean != null && nomP != null ? `${fmtS(um(l.pitchMean - nomP), 2)} µm je Gang · Nenn ${fmt(nomP, 3)}` : null),
+      tile('Steigung zwischen Fenstern', l.spread != null ? `${fmt(um(l.spread), 1)} µm` : '–', l.windows.length ? `Spanne der ${l.windows.length} Fenstermittel (Länge über ${l.windows[0].turns} Gänge)` : null),
+      tile('Werte außerhalb Toleranz', String(sm.oot), sm.oot ? `in ${sm.ootChars.length} Merkmal(en)` : 'alle Merkmale', sm.oot > 0),
+    );
+
+    const bcdBox = h('div', { class: 'chartbox' });
+    const leadBox = h('div', { class: 'chartbox' });
+    const legendBtn = (key, glyph, label) => h('button', {
+      class: 'lg', type: 'button', 'aria-pressed': String(state.show[key]),
+      onclick: () => { state.show[key] = !state.show[key]; renderProfile(); },
+    }, glyph, h('span', { class: 't', text: label }));
+    const charts = h('div', { class: 'charts' });
+    if (hasBcd) {
+      const hasHP = ds.chars.some((c) => c.cls.fit === 'huell' || c.cls.fit === 'pferch');
+      charts.append(h('div', null,
+        h('div', { class: 'chart-title' }, h('h3', { text: 'BCD über Gang' }), h('span', { class: 'muted', text: `Abweichung vom Nennmaß ${fmt(b.nominal ?? ds.chars.find((c) => c.cls.group === 'bcd').nominal, 3)} mm in µm` })),
+        h('div', { class: 'legend' },
+          legendBtn('gauss', glyph('gauss'), 'Gauss x̄ · Min–Max'),
+          hasHP ? legendBtn('huell', glyph('huell'), 'Hüll x̄') : null,
+          hasHP ? legendBtn('pferch', glyph('pferch'), 'Pferch x̄') : null,
+          legendBtn('ctx', glyph('ctx'), u.pooled ? 'einzelne Aufträge (Gauss x̄)' : 'andere Aufträge (Gauss x̄)'),
+          h('span', { class: 'lg static' }, glyph('band'), h('span', { class: 't', text: 'Toleranz Gauss' })),
+          hasHP ? h('span', { class: 'lg static' }, glyph('tol2'), h('span', { class: 't', text: 'Toleranz Hüll/Pferch' })) : null),
+        bcdBox));
+    }
+    if (hasLead) {
+      const w0 = ds.chars.find((c) => c.cls.group === 'lead');
+      charts.append(h('div', null,
+        h('div', { class: 'chart-title' }, h('h3', { text: 'Steigung über Gewindelänge' }), h('span', { class: 'muted', text: `Längenabweichung je Fenster über ${w0.cls.turns} Gänge vom Nennmaß ${fmt(w0.nominal, 3)} mm in µm` })),
+        h('div', { class: 'legend' },
+          h('span', { class: 'lg static' }, glyph('gauss'), h('span', { class: 't', text: 'Fenster x̄ · Min–Max' })),
+          state.show.ctx ? h('span', { class: 'lg static' }, glyph('ctx'), h('span', { class: 't', text: u.pooled ? 'einzelne Aufträge' : 'andere Aufträge' })) : null,
+          h('span', { class: 'lg static' }, glyph('band'), h('span', { class: 't', text: 'Toleranz' }))),
+        leadBox));
+    }
+    sec.replaceChildren(head, tiles, charts, h('p', { class: 'note', text: 'Tipp: Mit der Maus über die Diagramme fahren oder ein Diagramm anklicken und mit ← → durch die Gänge gehen. Alle Werte stehen auch in der Kennwert-Tabelle unten.' }));
+    if (hasBcd) drawBcd(bcdBox, u);
+    if (hasLead) drawLead(leadBox, u);
+  }
+
+  /** Legenden-Symbol (Mark-Spiegel). */
+  function glyph(kind) {
+    const g = s('svg', { width: 18, height: 12, viewBox: '0 0 18 12', 'aria-hidden': 'true', class: 'glyph' });
+    if (kind === 'gauss') { s('line', { x1: 1, x2: 17, y1: 6, y2: 6, stroke: 'var(--s1)', 'stroke-width': 2 }, g); s('circle', { cx: 9, cy: 6, r: 3.5, fill: 'var(--s1)' }, g); }
+    else if (kind === 'huell') { s('line', { x1: 1, x2: 17, y1: 6, y2: 6, stroke: 'var(--s2)', 'stroke-width': 1.5 }, g); s('path', { d: triPath(9, 6, 4.5, true), fill: 'var(--s2)' }, g); }
+    else if (kind === 'pferch') { s('line', { x1: 1, x2: 17, y1: 6, y2: 6, stroke: 'var(--s3)', 'stroke-width': 1.5 }, g); s('path', { d: triPath(9, 6, 4.5, false), fill: 'var(--s3)' }, g); }
+    else if (kind === 'ctx') s('line', { x1: 1, x2: 17, y1: 6, y2: 6, stroke: 'var(--ctx)', 'stroke-width': 1.5 }, g);
+    else if (kind === 'band') { s('rect', { x: 1, y: 2, width: 16, height: 8, fill: 'var(--tolband)' }, g); s('line', { x1: 1, x2: 17, y1: 2, y2: 2, class: 'tolline' }, g); s('line', { x1: 1, x2: 17, y1: 10, y2: 10, class: 'tolline' }, g); }
+    else if (kind === 'tol2') { s('line', { x1: 1, x2: 17, y1: 6, y2: 6, class: 'tolline2' }, g); }
+    return g;
+  }
+  function triPath(cx, cy, r, up) {
+    const k = up ? 1 : -1;
+    return `M${cx},${cy - k * r}L${cx + r * 0.95},${cy + k * r * 0.65}L${cx - r * 0.95},${cy + k * r * 0.65}Z`;
+  }
+
+  // ------------------------------------------------------------ Diagramm-Grundlagen
+  function lin(d0, d1, r0, r1) { const k = (r1 - r0) / (d1 - d0 || 1); const f = (v) => r0 + (v - d0) * k; f.inv = (p) => d0 + (p - r0) / k; return f; }
+  function niceStep(span, count) {
+    const raw = span / Math.max(1, count), p = Math.pow(10, Math.floor(Math.log10(raw))), m = raw / p;
+    return (m <= 1 ? 1 : m <= 2 ? 2 : m <= 2.5 ? 2.5 : m <= 5 ? 5 : 10) * p;
+  }
+  function niceDomain(vals, count) {
+    let min = Math.min(...vals), max = Math.max(...vals);
+    if (!isFinite(min)) { min = 0; max = 1; }
+    if (min === max) { min -= 1; max += 1; }
+    const pad = (max - min) * 0.05; min -= pad; max += pad;
+    const st = niceStep(max - min, count);
+    const d = [Math.floor(min / st + 1e-9) * st, Math.ceil(max / st - 1e-9) * st];
+    const t = [];
+    for (let v = d[0]; v <= d[1] + st * 1e-6; v += st) t.push(+v.toFixed(10));
+    return { domain: d, ticks: t, step: st };
+  }
+  function decimalsForStep(st) { return Math.max(0, -Math.floor(Math.log10(st) + 1e-9)); }
+
+  /** Skalierung gegenüber 14 px Grundschrift (Full HD 15 px, 4K 17–20 px) – Diagramm-Geometrie wächst mit. */
+  function rootScale() { return (parseFloat(getComputedStyle(document.documentElement).fontSize) || 14) / 14; }
+  const isWide = () => window.matchMedia('(min-width:1600px)').matches;
+  /** Diagrammhöhe: auf großen Bildschirmen an die Fensterhöhe angelehnt, damit Diagramme nicht flach wirken. */
+  function chartHeight(base) {
+    const k = rootScale();
+    if (!isWide()) return Math.round(base * k);
+    return Math.round(Math.max(base * k, Math.min(window.innerHeight * 0.44, base * k * 1.7)));
+  }
+
+  function frame(host, o) {
+    const k = rootScale();
+    const W = Math.max(300, Math.floor(host.clientWidth || 640)), H = o.height || 300;
+    const m = { l: (o.ml || 48) * k, r: 14 * k, t: 12 * k, b: (o.mb || 34) * k };
+    const svg = s('svg', { width: W, height: H, viewBox: `0 0 ${W} ${H}`, class: 'chart', role: 'img', 'aria-label': o.aria, tabindex: 0 });
+    host.replaceChildren(svg);
+    const x = lin(o.x[0], o.x[1], m.l, W - m.r), y = lin(o.y[0], o.y[1], H - m.b, m.t);
+    const grid = s('g', { class: 'grid' }, svg);
+    for (const t of o.yTicks) {
+      s('line', { x1: m.l, x2: W - m.r, y1: y(t), y2: y(t) }, grid);
+      s('text', { x: m.l - 8 * k, y: y(t), 'text-anchor': 'end', 'dominant-baseline': 'middle', class: 'tick' }, svg).textContent = o.yFmt(t);
+    }
+    s('line', { x1: m.l, x2: W - m.r, y1: H - m.b, y2: H - m.b, class: 'axis' }, svg);
+    for (const t of o.xTicks || []) {
+      s('line', { x1: x(t.v), x2: x(t.v), y1: H - m.b, y2: H - m.b + 4 * k, class: 'axis' }, svg);
+      s('text', { x: x(t.v), y: H - m.b + 16 * k, 'text-anchor': 'middle', class: 'tick' }, svg).textContent = t.label;
+    }
+    if (o.xTitle) s('text', { x: m.l, y: H - m.b + 16 * k, 'text-anchor': 'end', dx: -8 * k, class: 'tick' }, svg).textContent = o.xTitle;
+    const plot = s('g', null, svg);
+    return { svg, plot, x, y, W, H, m, k };
+  }
+
+  // Tooltip
+  const tip = $('tip');
+  function showTip(node, pt) {
+    tip.replaceChildren(node);
+    tip.hidden = false;
+    const r = tip.getBoundingClientRect(), vw = window.innerWidth, vh = window.innerHeight;
+    let left = pt.x + 14, top = pt.y + 14;
+    if (left + r.width > vw - 8) left = pt.x - r.width - 14;
+    if (left < 8) left = 8;
+    if (top + r.height > vh - 8) top = pt.y - r.height - 14;
+    if (top < 8) top = 8;
+    tip.style.left = left + 'px'; tip.style.top = top + 'px';
+  }
+  function hideTip() { tip.hidden = true; }
+  function tipBox(title, rows, foot) {
+    return h('div', null, h('div', { class: 'tip-title', text: title }),
+      rows.map((r) => h('div', { class: 'tip-row' }, h('span', { class: 'lk ' + (r.key ? 'k-' + r.key : 'none') }), h('strong', { text: r.value }), h('span', { class: 'tip-label', text: r.label }))),
+      foot ? [].concat(foot).filter(Boolean).map((f) => h('div', { class: 'tip-foot', text: f })) : null);
+  }
+
+  /** Fadenkreuz: rastet auf die nächste Position ein; Tastatur ← → und Esc. */
+  function crosshair(f, points, build, onPick) {
+    const line = s('line', { class: 'cross', y1: f.m.t, y2: f.H - f.m.b, visibility: 'hidden' }, f.svg);
+    const hit = s('rect', { x: f.m.l, y: 0, width: f.W - f.m.l - f.m.r, height: f.H, fill: 'transparent', style: onPick ? 'cursor:pointer' : null }, f.svg);
+    let cur = -1;
+    const nearest = (clientX) => {
+      const px = clientX - f.svg.getBoundingClientRect().left;
+      let best = 0, bd = Infinity;
+      points.forEach((p, i) => { const d = Math.abs(p.x - px); if (d < bd) { bd = d; best = i; } });
+      return best;
+    };
+    const show = (i, pt) => {
+      cur = i;
+      const p = points[i];
+      line.setAttribute('x1', p.x); line.setAttribute('x2', p.x); line.setAttribute('visibility', 'visible');
+      const r = f.svg.getBoundingClientRect();
+      showTip(build(i), pt || { x: r.left + p.x, y: r.top + f.m.t + 24 * f.k });
+    };
+    const hide = () => { cur = -1; line.setAttribute('visibility', 'hidden'); hideTip(); };
+    hit.addEventListener('pointermove', (e) => show(nearest(e.clientX), { x: e.clientX, y: e.clientY }));
+    hit.addEventListener('pointerdown', (e) => show(nearest(e.clientX), { x: e.clientX, y: e.clientY }));
+    hit.addEventListener('pointerleave', hide);
+    if (onPick) hit.addEventListener('click', (e) => onPick(nearest(e.clientX)));
+    f.svg.addEventListener('keydown', (e) => {
+      const n = points.length;
+      if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') { e.preventDefault(); show(cur < 0 ? 0 : (cur + (e.key === 'ArrowRight' ? 1 : n - 1)) % n); }
+      else if (e.key === 'Escape') hide();
+      else if ((e.key === 'Enter' || e.key === ' ') && onPick && cur >= 0) { e.preventDefault(); onPick(cur); }
+    });
+    f.svg.addEventListener('focus', () => show(cur < 0 ? 0 : cur));
+    f.svg.addEventListener('blur', hide);
+  }
+
+  /** Stufenlinie einer Toleranzgrenze über die Gänge (Wechsel jeweils mittig zwischen zwei Gängen). */
+  function stepSegments(arr, key, xd) {
+    const segs = [];
+    arr.forEach((t, i) => {
+      const v = t[key];
+      if (v == null) return;
+      const a = i === 0 ? xd[0] : (arr[i - 1].gang + t.gang) / 2;
+      const b = i === arr.length - 1 ? xd[1] : (t.gang + arr[i + 1].gang) / 2;
+      segs.push({ a, b, v });
+    });
+    return segs;
+  }
+  function stepPathD(f, segs, U) {
+    let d = '', prev = null;
+    for (const sg of segs) {
+      const ya = f.y(U(sg.v));
+      d += (prev && Math.abs(prev.b - sg.a) < 1e-9 ? `L${f.x(sg.a)},${ya}` : `M${f.x(sg.a)},${ya}`) + `L${f.x(sg.b)},${ya}`;
+      prev = sg;
+    }
+    return d;
+  }
+
+  // ------------------------------------------------------------ BCD-Diagramm
+  function drawBcd(host, u) {
+    const ds = state.ds, res = state.res, show = state.show;
+    const catB = ds.chars.filter((c) => c.cls.group === 'bcd');
+    const nominal = u.summary.bcd.nominal ?? catB.find((c) => c.cls.fit === 'gauss')?.nominal ?? catB[0].nominal ?? 0;
+    const U = (v) => (v - nominal) * 1000;
+    const xd = gangDomain();
+    const gangs = [...new Set(catB.map((c) => c.cls.gang))].sort((a, b) => a - b);
+    const tol = {};
+    for (const fit of FITS) {
+      const arr = catB.filter((c) => c.cls.fit === fit).map((c) => ({ gang: c.cls.gang, lsl: c.lsl, usl: c.usl })).sort((a, b) => a.gang - b.gang);
+      if (arr.length) tol[fit] = arr;
+    }
+    const profile = u.summary.bcd.profile;
+    const others = show.ctx ? res.order.map((o) => res.units.get(o)).filter((x) => x.included && x.id !== u.id) : [];
+
+    const ys = [0];
+    const pushTol = (arr) => arr && arr.forEach((t) => { if (t.lsl != null) ys.push(U(t.lsl)); if (t.usl != null) ys.push(U(t.usl)); });
+    if (show.gauss) pushTol(tol.gauss);
+    if (show.huell) pushTol(tol.huell);
+    if (show.pferch) pushTol(tol.pferch);
+    for (const g of profile) {
+      if (show.gauss && g.gauss) ys.push(U(g.gauss.stats.min), U(g.gauss.stats.max));
+      if (show.huell && g.huell) ys.push(U(g.huell.stats.mean));
+      if (show.pferch && g.pferch) ys.push(U(g.pferch.stats.mean));
+    }
+    for (const o of others) for (const g of o.summary.bcd.profile) if (g.gauss) ys.push(U(g.gauss.stats.mean));
+    const yd = niceDomain(ys, 7);
+    const dd = decimalsForStep(yd.step);
+    const f = frame(host, {
+      height: chartHeight(330), x: xd, y: yd.domain, yTicks: yd.ticks, yFmt: (v) => fmtS(v, dd),
+      xTicks: gangs.map((g) => ({ v: g, label: String(g) })), xTitle: 'Gang',
+      aria: `BCD über Gang, ${unitTitle(u)}`,
+    });
+    const P = f.plot, k = f.k;
+
+    // Toleranz
+    if (tol.gauss && show.gauss) {
+      const lo = stepSegments(tol.gauss, 'lsl', xd), hi = stepSegments(tol.gauss, 'usl', xd);
+      if (lo.length === tol.gauss.length && hi.length === tol.gauss.length) {
+        let d = '';
+        hi.forEach((sg, i) => { d += `${i ? 'L' : 'M'}${f.x(sg.a)},${f.y(U(sg.v))}L${f.x(sg.b)},${f.y(U(sg.v))}`; });
+        for (let i = lo.length - 1; i >= 0; i--) d += `L${f.x(lo[i].b)},${f.y(U(lo[i].v))}L${f.x(lo[i].a)},${f.y(U(lo[i].v))}`;
+        s('path', { d: d + 'Z', class: 'tolband' }, P);
+      }
+      s('path', { d: stepPathD(f, lo, U), class: 'tolline' }, P);
+      s('path', { d: stepPathD(f, hi, U), class: 'tolline' }, P);
+    }
+    const hpTol = [];
+    if (show.huell && tol.huell) hpTol.push(tol.huell);
+    if (show.pferch && tol.pferch && !(tol.huell && show.huell && JSON.stringify(tol.huell.map((t) => [t.lsl, t.usl])) === JSON.stringify(tol.pferch.map((t) => [t.lsl, t.usl])))) hpTol.push(tol.pferch);
+    for (const arr of hpTol) for (const key of ['lsl', 'usl']) s('path', { d: stepPathD(f, stepSegments(arr, key, xd), U), class: 'tolline2' }, P);
+    s('line', { x1: f.m.l, x2: f.W - f.m.r, y1: f.y(0), y2: f.y(0), class: 'zero' }, P);
+
+    // Kontext: andere Aufträge
+    for (const o of others) {
+      const pts = o.summary.bcd.profile.filter((g) => g.gauss).map((g) => `${f.x(g.gang)},${f.y(U(g.gauss.stats.mean))}`);
+      if (pts.length > 1) s('polyline', { points: pts.join(' '), fill: 'none', stroke: 'var(--ctx)', 'stroke-width': 1.5 * k, 'stroke-linejoin': 'round' }, P);
+    }
+    // Hüll / Pferch
+    const fitStyle = { huell: { color: 'var(--s2)', up: true }, pferch: { color: 'var(--s3)', up: false } };
+    for (const fit of ['huell', 'pferch']) {
+      if (!show[fit]) continue;
+      const pts = profile.filter((g) => g[fit]);
+      if (pts.length > 1) s('polyline', { points: pts.map((g) => `${f.x(g.gang)},${f.y(U(g[fit].stats.mean))}`).join(' '), fill: 'none', stroke: fitStyle[fit].color, 'stroke-width': 1.5 * k, 'stroke-linejoin': 'round', 'stroke-opacity': 0.85 }, P);
+      for (const g of pts) s('path', { d: triPath(f.x(g.gang), f.y(U(g[fit].stats.mean)), 5.5 * k, fitStyle[fit].up), fill: fitStyle[fit].color, stroke: 'var(--surface)', 'stroke-width': 2, 'paint-order': 'stroke' }, P);
+    }
+    // Gauss
+    if (show.gauss) {
+      const pts = profile.filter((g) => g.gauss);
+      for (const g of pts) {
+        const X = f.x(g.gang), y1 = f.y(U(g.gauss.stats.min)), y2 = f.y(U(g.gauss.stats.max));
+        s('line', { x1: X, x2: X, y1, y2, stroke: 'var(--s1)', 'stroke-width': 1.5 * k }, P);
+        s('line', { x1: X - 4 * k, x2: X + 4 * k, y1, y2: y1, stroke: 'var(--s1)', 'stroke-width': 1.5 * k }, P);
+        s('line', { x1: X - 4 * k, x2: X + 4 * k, y1: y2, y2, stroke: 'var(--s1)', 'stroke-width': 1.5 * k }, P);
+      }
+      if (pts.length > 1) s('polyline', { points: pts.map((g) => `${f.x(g.gang)},${f.y(U(g.gauss.stats.mean))}`).join(' '), fill: 'none', stroke: 'var(--s1)', 'stroke-width': 2 * k, 'stroke-linejoin': 'round', 'stroke-linecap': 'round' }, P);
+      for (const g of pts) s('circle', { cx: f.x(g.gang), cy: f.y(U(g.gauss.stats.mean)), r: 4.5 * k, fill: 'var(--s1)', stroke: 'var(--surface)', 'stroke-width': 2 }, P);
+    }
+
+    // Fadenkreuz
+    const byGang = new Map(profile.map((g) => [g.gang, g]));
+    const pts = gangs.filter((g) => byGang.has(g));
+    crosshair(f, pts.map((g) => ({ x: f.x(g) })), (i) => {
+      const g = byGang.get(pts[i]);
+      const rows = [], foot = [];
+      for (const fit of FITS) {
+        const e = g[fit];
+        if (!e) continue;
+        const st = e.stats, d = e.char.decimals;
+        rows.push({ key: fit, value: `${fmtS(U(st.mean), 1)} µm`, label: `${C.FIT_LABEL[fit]} x̄ ${fmt(st.mean, d + 1)} · ${fmt(st.min, d)}–${fmt(st.max, d)}` });
+        foot.push(`${C.FIT_LABEL[fit]} ${e.char.position}: Tol. ${tolText(e.char, d)} · n = ${st.n}${st.below + st.above ? ` · ⚠ ${st.below + st.above} außerhalb` : ''}`);
+      }
+      return tipBox(`Gang ${g.gang}`, rows, foot);
+    });
+  }
+
+  // ------------------------------------------------------------ Steigungs-Diagramm
+  function drawLead(host, u) {
+    const ds = state.ds, res = state.res;
+    const catL = ds.chars.filter((c) => c.cls.group === 'lead').sort((a, b) => a.cls.from - b.cls.from);
+    const xd = gangDomain();
+    const U = (v, c) => (v - (c.nominal ?? 0)) * 1000;
+    const wins = u.summary.lead.windows;
+    const others = state.show.ctx ? res.order.map((o) => res.units.get(o)).filter((x) => x.included && x.id !== u.id) : [];
+    const ys = [0];
+    for (const c of catL) { if (c.lsl != null) ys.push(U(c.lsl, c)); if (c.usl != null) ys.push(U(c.usl, c)); }
+    for (const w of wins) ys.push(U(w.stats.min, w.char), U(w.stats.max, w.char));
+    for (const o of others) for (const w of o.summary.lead.windows) ys.push(U(w.stats.mean, w.char));
+    const yd = niceDomain(ys, 6), dd = decimalsForStep(yd.step);
+    const bounds = [...new Set(catL.flatMap((c) => [c.cls.from, c.cls.to]))].sort((a, b) => a - b);
+    const f = frame(host, {
+      height: chartHeight(isWide() ? 330 : 260), x: xd, y: yd.domain, yTicks: yd.ticks, yFmt: (v) => fmtS(v, dd),
+      xTicks: bounds.map((g) => ({ v: g, label: String(g) })), xTitle: 'Gang',
+      aria: `Steigung über Gewindelänge, ${unitTitle(u)}`,
+    });
+    const P = f.plot, k = f.k;
+    const tolKey = (c) => `${c.lsl == null ? '' : U(c.lsl, c).toFixed(3)}|${c.usl == null ? '' : U(c.usl, c).toFixed(3)}`;
+    const same = new Set(catL.map(tolKey)).size === 1;
+    if (same) {
+      const c = catL[0], a = f.x(Math.min(...catL.map((k) => k.cls.from))), b = f.x(Math.max(...catL.map((k) => k.cls.to)));
+      if (c.lsl != null && c.usl != null) s('rect', { x: a, width: b - a, y: f.y(U(c.usl, c)), height: f.y(U(c.lsl, c)) - f.y(U(c.usl, c)), class: 'tolband' }, P);
+      for (const v of [c.lsl, c.usl]) if (v != null) s('line', { x1: a, x2: b, y1: f.y(U(v, c)), y2: f.y(U(v, c)), class: 'tolline' }, P);
+    } else {
+      for (const c of catL) for (const v of [c.lsl, c.usl]) if (v != null) s('line', { x1: f.x(c.cls.from), x2: f.x(c.cls.to), y1: f.y(U(v, c)), y2: f.y(U(v, c)), class: 'tolline' }, P);
+    }
+    s('line', { x1: f.m.l, x2: f.W - f.m.r, y1: f.y(0), y2: f.y(0), class: 'zero' }, P);
+    for (const o of others) for (const w of o.summary.lead.windows) {
+      const Y = f.y(U(w.stats.mean, w.char));
+      s('line', { x1: f.x(w.from), x2: f.x(w.to), y1: Y, y2: Y, stroke: 'var(--ctx)', 'stroke-width': 1.5 * k, 'stroke-linecap': 'round' }, P);
+    }
+    for (const w of wins) {
+      const Y = f.y(U(w.stats.mean, w.char)), mid = f.x((w.from + w.to) / 2);
+      s('line', { x1: f.x(w.from), x2: f.x(w.to), y1: Y, y2: Y, stroke: 'var(--s1)', 'stroke-width': 2 * k, 'stroke-linecap': 'round' }, P);
+      const y1 = f.y(U(w.stats.min, w.char)), y2 = f.y(U(w.stats.max, w.char));
+      s('line', { x1: mid, x2: mid, y1, y2, stroke: 'var(--s1)', 'stroke-width': 1.5 * k }, P);
+      s('line', { x1: mid - 4 * k, x2: mid + 4 * k, y1, y2: y1, stroke: 'var(--s1)', 'stroke-width': 1.5 * k }, P);
+      s('line', { x1: mid - 4 * k, x2: mid + 4 * k, y1: y2, y2, stroke: 'var(--s1)', 'stroke-width': 1.5 * k }, P);
+      s('circle', { cx: mid, cy: Y, r: 4.5 * k, fill: 'var(--s1)', stroke: 'var(--surface)', 'stroke-width': 2 }, P);
+    }
+    if (!wins.length) return;
+    crosshair(f, wins.map((w) => ({ x: f.x((w.from + w.to) / 2) })), (i) => {
+      const w = wins[i], st = w.stats, c = w.char, d = c.decimals;
+      return tipBox(`${c.cls.label} · ${w.turns} Gänge`, [
+        { key: 'gauss', value: `${fmtS(U(st.mean, c), 1)} µm`, label: `Länge x̄ ${fmt(st.mean, d + 1)} mm` },
+        { value: `${fmt(w.pitch, 5)} mm`, label: `Steigung je Gang${w.nominalPitch != null ? ` (Nenn ${fmt(w.nominalPitch, 3)})` : ''}` },
+        { value: `${fmt(st.min, d)}–${fmt(st.max, d)}`, label: `Min–Max · s = ${fmt(st.sd, d + 1)}` },
+      ], `${c.position}: Tol. ${tolText(c, d)} · n = ${st.n}${st.below + st.above ? ` · ⚠ ${st.below + st.above} außerhalb` : ''}`);
+    });
+  }
+
+  // ------------------------------------------------------------ Batch-Vergleich
+  function renderCompare() {
+    const sec = $('compareSec'), ds = state.ds;
+    const gl = Object.fromEntries(C.GROUPS.map((g) => [g.id, g.label]));
+    const sel = h('select', { 'aria-label': 'Merkmal', onchange: (e) => { state.cmp = e.target.value; renderCompare(); } });
+    let og = null, ogId = null;
+    for (const c of ds.charsGrouped) {
+      if (c.cls.sub !== ogId) { og = h('optgroup', { label: gl[c.cls.sub] }); sel.append(og); ogId = c.cls.sub; }
+      const o = h('option', { value: c.position, text: `${c.cls.label} (${c.position})` });
+      if (c.position === state.cmp) o.selected = true;
+      og.append(o);
+    }
+    const box = h('div', { class: 'chartbox' });
+    const c = ds.charMap.get(state.cmp);
+    sec.replaceChildren(
+      h('div', { class: 'sec-head' },
+        h('div', null, h('h2', { text: 'Merkmal im Auftragsvergleich' }), h('p', { class: 'sub', text: 'Alle Einzelwerte je einbezogenem Fertigungsauftrag, Querstrich = Mittelwert. Spalte anklicken = Auftrag auswählen.' })),
+        h('div', { class: 'toolbar' }, sel)),
+      c ? h('div', { class: 'legend' },
+        h('span', { class: 'lg static' }, h('span', { class: 't', text: `${c.cls.label} · ${c.charText} ${c.position} · ${c.unit} · Tol. ${tolText(c, c.decimals)}` }))) : null,
+      box);
+    if (c) drawCompare(box, c);
+  }
+
+  function drawCompare(host, c) {
+    const res = state.res;
+    const units = res.order.map((o) => res.units.get(o)).filter((u) => u.included && u.chars.get(c.position));
+    if (!units.length) { host.replaceChildren(h('p', { class: 'empty', text: 'Keine Werte in den einbezogenen Aufträgen.' })); return; }
+    const d = c.decimals;
+    const ys = units.flatMap((u) => u.chars.get(c.position).values);
+    if (c.lsl != null) ys.push(c.lsl);
+    if (c.usl != null) ys.push(c.usl);
+    if (c.lsl == null && c.nominal === 0) ys.push(0);
+    const yd = niceDomain(ys, 6);
+    const W = Math.max(300, Math.floor(host.clientWidth || 640)), k0 = rootScale();
+    const bandW = (W - (62 + 14) * k0) / units.length;
+    const rotate = bandW < 70 * k0;
+    const f = frame(host, {
+      height: chartHeight(rotate ? 330 : 300), ml: 62, mb: rotate ? 72 : 34, x: [0, units.length], y: yd.domain, yTicks: yd.ticks,
+      yFmt: (v) => fmt(v, Math.max(decimalsForStep(yd.step), 0)), aria: `${c.cls.label} im Auftragsvergleich`,
+    });
+    const P = f.plot, k = f.k, cx = (i) => f.x(i + 0.5);
+    units.forEach((u, i) => {
+      if (state.sel === u.id) s('rect', { x: f.x(i) + 1, width: f.x(i + 1) - f.x(i) - 2, y: f.m.t, height: f.H - f.m.t - f.m.b, fill: 'var(--selwash)', rx: 4 * k }, P);
+      const tx = s('text', { class: 'tick', x: cx(i), y: f.H - f.m.b + 16 * k, 'text-anchor': rotate ? 'end' : 'middle', transform: rotate ? `rotate(-40 ${cx(i)} ${f.H - f.m.b + 12 * k})` : null }, f.svg);
+      tx.textContent = u.id;
+    });
+    for (const [v, lab] of [[c.lsl, 'UGW'], [c.usl, 'OGW']]) {
+      if (v == null) continue;
+      s('line', { x1: f.m.l, x2: f.W - f.m.r, y1: f.y(v), y2: f.y(v), class: 'tolline' }, P);
+      s('text', { class: 'ann', x: f.W - f.m.r - 2 * k, y: f.y(v) - 4 * k, 'text-anchor': 'end' }, P).textContent = `${lab} ${fmt(v, d)}`;
+    }
+    if (c.lsl != null && c.usl != null && c.nominal != null) {
+      s('line', { x1: f.m.l, x2: f.W - f.m.r, y1: f.y(c.nominal), y2: f.y(c.nominal), class: 'axis' }, P);
+    }
+    units.forEach((u, i) => {
+      const st = u.chars.get(c.position);
+      const hi = state.sel === 'ALL' || state.sel === u.id;
+      const spread = Math.min(bandW * 0.28, 22 * k);
+      st.values.forEach((v, j) => {
+        const jit = (((j * 0.6180339887) % 1) * 2 - 1) * spread;
+        s('circle', { cx: cx(i) + jit, cy: f.y(v), r: 3.5 * k, fill: hi ? 'var(--s1)' : 'var(--ctx)', 'fill-opacity': hi ? 0.8 : 1, stroke: 'var(--surface)', 'stroke-width': 1.5 }, P);
+      });
+      const half = Math.min(bandW * 0.36, 28 * k);
+      s('line', { x1: cx(i) - half, x2: cx(i) + half, y1: f.y(st.mean), y2: f.y(st.mean), stroke: 'var(--text2)', 'stroke-width': 2 * k, 'stroke-linecap': 'round' }, P);
+    });
+    crosshair(f, units.map((u, i) => ({ x: cx(i) })), (i) => {
+      const u = units[i], st = u.chars.get(c.position);
+      return tipBox(`Auftrag ${u.id} · Charge ${u.batch.batchNo || '–'}`, [
+        { key: 'gauss', value: `${fmt(st.mean, d + 1)} ${c.unit}`, label: `x̄ · s = ${fmt(st.sd, d + 1)}` },
+        { value: `${fmt(st.min, d)}–${fmt(st.max, d)}`, label: `Min–Max · n = ${st.n}` },
+      ], st.below + st.above ? `⚠ ${st.below + st.above} außerhalb (${st.below} unter UGW, ${st.above} über OGW)` : 'alle Werte in Toleranz');
+    }, (i) => select(units[i].id));
+  }
+
+  // ------------------------------------------------------------ Kennwerte
+  function renderStats() {
+    const sec = $('statsSec'), ds = state.ds, u = selUnit();
+    const gl = Object.fromEntries(C.GROUPS.map((g) => [g.id, g.label]));
+    const body = h('tbody');
+    let cur = null;
+    for (const c of ds.charsGrouped) {
+      const st = u.chars.get(c.position);
+      if (c.cls.sub !== cur) { body.append(h('tr', { class: 'grp' }, h('td', { colspan: 13, text: gl[c.cls.sub] }))); cur = c.cls.sub; }
+      const d = c.decimals;
+      const two = c.lsl != null && c.usl != null && c.nominal != null;
+      const dev = st && two ? (c.unit === 'mm' ? `${fmtS(um(st.mean - c.nominal), 1)} µm` : fmtS(st.mean - c.nominal, d + 1)) : '–';
+      const out = st ? st.below + st.above : 0;
+      body.append(h('tr', {
+        class: 'click' + (c.position === state.cmp ? ' sel' : ''), tabindex: 0, title: 'Im Auftragsvergleich zeigen',
+        onclick: () => pickChar(c.position), onkeydown: (e) => { if (e.key === 'Enter') pickChar(c.position); },
+      },
+        h('td', { text: c.position }), h('td', { text: c.cls.label }), h('td', { text: c.unit }),
+        h('td', { class: 'num', text: fmt(c.nominal, d) }), h('td', { class: 'num', text: fmt(c.lsl, d) }), h('td', { class: 'num', text: fmt(c.usl, d) }),
+        h('td', { class: 'num', text: st ? String(st.n) : '0' }),
+        h('td', { class: 'num', text: st ? fmt(st.mean, d + 1) : '–' }),
+        h('td', { class: 'num', text: dev }),
+        h('td', { class: 'num', text: st ? fmt(st.sd, d + 1) : '–' }),
+        h('td', { class: 'num', text: st ? fmt(st.min, d) : '–' }),
+        h('td', { class: 'num', text: st ? fmt(st.max, d) : '–' }),
+        h('td', { class: 'num' + (out ? ' oot' : ''), text: out ? `⚠ ${out} (↓${st.below} ↑${st.above})` : st ? '0' : '–' }),
+      ));
+    }
+    const exportBtn = h('button', { class: 'btn', type: 'button', onclick: doExport, text: 'Kennwerte exportieren (CSV)' });
+    sec.replaceChildren(
+      h('div', { class: 'sec-head' },
+        h('div', null, h('h2', { text: 'Kennwerte' }), h('p', { class: 'sub', text: unitTitle(u) + ' · Zeile anklicken = Merkmal im Auftragsvergleich zeigen' })),
+        h('div', { class: 'toolbar' }, exportBtn)),
+      h('div', { class: 'scroll tall' }, h('table', null,
+        h('thead', null, h('tr', null, ['Pos.', 'Merkmal', 'Einheit', 'Nennmaß', 'UGW', 'OGW', 'n', 'x̄', 'x̄ − Nenn', 's', 'Min', 'Max', 'außerhalb'].map((t, i) => h('th', { class: i >= 3 ? 'num' : null, text: t })))),
+        body)),
+      h('p', { class: 'note', text: 'Export: alle Merkmale, gepoolt und je Auftrag, Semikolon-getrennt mit Dezimalkomma (öffnet direkt in Excel).' }));
+  }
+  function pickChar(pos) {
+    state.cmp = pos;
+    renderCompare(); renderStats();
+    $('compareSec').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+  function doExport() {
+    const csv = C.exportCSV(state.ds, state.res);
+    const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' });
+    const a = h('a', { href: URL.createObjectURL(blob), download: `Spindel_Kennwerte_${state.ds.material || 'Material'}_${new Date().toISOString().slice(0, 10)}.csv` });
+    document.body.append(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  }
+
+  // ------------------------------------------------------------ Größe
+  // Diagramme bei Breiten-/Höhenänderung (Fenster, Zoom, Wechsel des Monitors) neu zeichnen
+  let lastKey = '', rt = 0;
+  const redraw = () => {
+    const key = `${document.querySelector('main').clientWidth}x${window.innerHeight}@${rootScale()}`;
+    if (key === lastKey) return;
+    lastKey = key;
+    clearTimeout(rt);
+    rt = setTimeout(() => { if (state.res) { renderProfile(); renderCompare(); } }, 120);
+  };
+  new ResizeObserver(redraw).observe(document.querySelector('main'));
+  window.addEventListener('resize', redraw);
+
+  // Für Tests/Automatisierung: Text direkt laden
+  globalThis.SubApp = { loadText: (text, name) => { const p = C.parseCAQ(text, name || 'eingefuegt.csv'); p.encoding = 'Text'; state.files = state.files.filter((x) => x.fileName !== p.fileName); state.files.push(p); rebuild(); }, state };
+})();
+</script>
+</body>
+</html>
